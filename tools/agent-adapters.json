@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "verified_at": "2026-07-22",
+  "agents": [
+    {
+      "id": "claude-code",
+      "display_name": "Claude Code",
+      "entry_paths": ["CLAUDE.md", ".claude/CLAUDE.md"],
+      "skills_paths": [".claude/skills"],
+      "native_agents_md": false,
+      "native_agents_skills": false,
+      "adapter": {
+        "entry_path": "CLAUDE.md",
+        "entry_content": "@AGENTS.md",
+        "skills_path": ".claude/skills"
+      },
+      "sources": [
+        "https://code.claude.com/docs/en/memory",
+        "https://code.claude.com/docs/en/skills"
+      ]
+    },
+    {
+      "id": "codex",
+      "display_name": "Codex",
+      "entry_paths": ["AGENTS.md"],
+      "skills_paths": [".agents/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "sources": [
+        "https://learn.chatgpt.com/docs/agent-configuration/agents-md",
+        "https://learn.chatgpt.com/docs/build-skills"
+      ]
+    },
+    {
+      "id": "reasonix",
+      "display_name": "Reasonix",
+      "entry_paths": ["REASONIX.md", "AGENTS.md", "CLAUDE.md"],
+      "skills_paths": [".reasonix/skills", ".agents/skills", ".agent/skills", ".claude/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "sources": [
+        "https://github.com/esengine/DeepSeek-Reasonix/blob/main/REASONIX.md",
+        "https://github.com/esengine/DeepSeek-Reasonix/blob/main/reasonix.example.toml"
+      ]
+    },
+    {
+      "id": "pi",
+      "display_name": "Pi",
+      "entry_paths": ["AGENTS.md", "CLAUDE.md"],
+      "skills_paths": [".agents/skills", ".pi/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "sources": [
+        "https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/README.md"
+      ]
+    },
+    {
+      "id": "cursor",
+      "display_name": "Cursor",
+      "entry_paths": ["AGENTS.md", ".cursor/rules"],
+      "skills_paths": [".agents/skills", ".cursor/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "sources": [
+        "https://cursor.com/docs/rules",
+        "https://cursor.com/docs/skills"
+      ]
+    },
+    {
+      "id": "trae",
+      "display_name": "Trae",
+      "entry_paths": ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md", ".trae/rules"],
+      "skills_paths": [".agents/skills", ".trae/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "setup_note": "在 Settings > Rules > Import Settings 中启用 Include AGENTS.md in the context，并在 Settings > Skills & Commands > Import Settings 中启用 Enable .agents Skills Directory。",
+      "sources": [
+        "https://docs.trae.ai/ide/rules",
+        "https://docs.trae.ai/ide/skills"
+      ]
+    },
+    {
+      "id": "opencode",
+      "display_name": "OpenCode",
+      "entry_paths": ["AGENTS.md", "CLAUDE.md"],
+      "skills_paths": [".agents/skills", ".opencode/skills", ".claude/skills"],
+      "native_agents_md": true,
+      "native_agents_skills": true,
+      "sources": [
+        "https://opencode.ai/docs/rules/",
+        "https://opencode.ai/docs/skills/"
+      ]
+    }
+  ]
+}

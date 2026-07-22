@@ -1,0 +1,9 @@
+# 本地设置和生成的 Agent 适配器
+AGENTS.local.md
+CLAUDE.md
+.claude
+
+# 常见本地文件
+.DS_Store
+Thumbs.db
+
