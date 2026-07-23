@@ -1,6 +1,6 @@
 ---
 name: sw-doctor
-description: 只读诊断工作流安装、Agent 入口、Skills 映射、本地配置、目标 Git 仓库和 Node 版本。setup 完成后、配置或版本变化后、工作流无法触发时使用。
+description: 只读诊断工作流安装、Agent 入口、Skills 映射、本地配置、目标 Git 仓库和 Node 版本。工作流命令失败，或安装、配置、版本、Agent 接入发生变化后需要核验时使用；不要仅因新建会话或 setup 完成而单独调用。
 ---
 
 # 诊断工作流

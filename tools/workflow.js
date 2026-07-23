@@ -49,7 +49,7 @@ function help() {
     [
       "spec-driven-template CLI",
       "",
-      "setup [--config file] [--detailed] [--apply]",
+      "setup [--config file] [--apply]",
       "doctor [--template] [--json]",
       "adapter install --agent <id> [--apply] [--replace]",
       "iteration create --title <title> --goal <goal> [--target-version <version>]",
@@ -111,7 +111,7 @@ async function main(argv) {
     return;
   }
   if (group === "setup") {
-    assertArity(positionals, 1, "setup [--config file] [--detailed] [--apply]");
+    assertArity(positionals, 1, "setup [--config file] [--apply]");
     await runSetup(options);
     return;
   }

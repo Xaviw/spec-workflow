@@ -129,14 +129,6 @@ export function assertRepositoryRegistration(repo) {
   return identity;
 }
 
-function currentGitEmails() {
-  const values = [
-    runGit(["config", "--get", "user.email"], ROOT, true),
-    runGit(["config", "--global", "--get", "user.email"], ROOT, true),
-  ].filter(Boolean);
-  return [...new Set(values)];
-}
-
 function detectedRepositoryDefaults(path) {
   let startCommand = "";
   let runtime = "";
@@ -184,7 +176,7 @@ async function ask(rl, label, defaultValue = "", allowClear = false) {
   return answer || defaultValue;
 }
 
-export async function collectDetailedRepositoryConfig(rl, repository, defaults) {
+export async function collectRepositoryConfig(rl, repository, defaults) {
   const prefix = repository.id + " ";
   const port = repository.start?.port;
   const modules = optionList(
@@ -294,10 +286,9 @@ export async function collectDetailedRepositoryConfig(rl, repository, defaults) 
   };
 }
 
-async function collectSetupConfig(options = {}) {
+async function collectSetupConfig() {
   const adapters = readJson(join(ROOT, "tools", "agent-adapters.json"));
   const existing = readLocalConfig() || {};
-  const detailed = options.detailed === true;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const projectName = await ask(
@@ -346,8 +337,6 @@ async function collectSetupConfig(options = {}) {
       throw new Error("未知 Agent: " + agentId);
     }
 
-    const detectedEmails = (existing.git_emails || currentGitEmails()).join(",");
-    const gitEmails = optionList(await ask(rl, "你的 Git 邮箱，逗号分隔", detectedEmails));
     const repositories = [...(existing.repositories || [])];
     if (repositories.length) {
       const keep = (
@@ -359,7 +348,7 @@ async function collectSetupConfig(options = {}) {
       ).toLowerCase();
       if (keep !== "yes") {
         repositories.length = 0;
-      } else if (detailed) {
+      } else {
         for (const [index, repository] of repositories.entries()) {
           const identity = assertRepositoryRegistration(repository);
           const role = await ask(
@@ -367,7 +356,7 @@ async function collectSetupConfig(options = {}) {
             repository.id + " 仓库角色",
             repository.role || "unknown",
           );
-          repositories[index] = await collectDetailedRepositoryConfig(
+          repositories[index] = await collectRepositoryConfig(
             rl,
             {
               ...repository,
@@ -418,37 +407,34 @@ async function collectSetupConfig(options = {}) {
         }
       }
       const role = await ask(rl, id + " 仓库角色", "unknown");
-      let repository = {
-        id,
-        path: repoPath,
-        remote: repositoryIdentity.remote,
-        role: role || "unknown",
-        modules: [],
-        start: {
-          command: defaults.startCommand || "unknown",
-          port: null,
-          runtime: defaults.runtime || null,
+      const repository = await collectRepositoryConfig(
+        rl,
+        {
+          id,
+          path: repoPath,
+          remote: repositoryIdentity.remote,
+          role: role || "unknown",
+          modules: [],
+          start: {
+            command: defaults.startCommand || "unknown",
+            port: null,
+            runtime: defaults.runtime || null,
+          },
+          dependencies: {
+            env_var_names: defaults.envVarNames,
+            config_center: "unknown",
+          },
+          integration: { mode: "direct" },
+          environments: {
+            available: ["local"],
+            local_operable: ["local"],
+            remote_read: [],
+            remote_write: [],
+            switch_method: "unknown",
+          },
         },
-        dependencies: {
-          env_var_names: defaults.envVarNames,
-          config_center: "unknown",
-        },
-        integration: { mode: "direct" },
-        environments: {
-          available: ["local"],
-          local_operable: ["local"],
-          remote_read: [],
-          remote_write: [],
-          switch_method: "unknown",
-        },
-      };
-      if (detailed) {
-        repository = await collectDetailedRepositoryConfig(
-          rl,
-          repository,
-          defaults,
-        );
-      }
+        defaults,
+      );
       repositories.push(repository);
     }
     return {
@@ -456,7 +442,6 @@ async function collectSetupConfig(options = {}) {
       workflow_version: readJson(join(ROOT, "tools", "package.json")).version,
       project: { name: projectName, goal },
       agent,
-      git_emails: gitEmails,
       repositories,
       permissions: {
         production_write: false,
@@ -621,18 +606,23 @@ export async function runSetup(options) {
     config = readJson(resolve(process.cwd(), String(options.config)));
   } else {
     interactive = true;
-    config = await collectSetupConfig(options);
+    config = await collectSetupConfig();
   }
+  const gitEmail = runGit(
+    ["config", "--local", "--get", "user.email"],
+    ROOT,
+    true,
+  );
+  config.git_emails = gitEmail ? [gitEmail] : [];
   config.workflow_version = readJson(join(ROOT, "tools", "package.json")).version;
   validateSetupConfig(config);
-  console.log(JSON.stringify(config, null, 2));
+  const previewConfig = { ...config };
+  delete previewConfig.git_emails;
+  console.log(JSON.stringify(previewConfig, null, 2));
   console.log(
     "\nAgent 适配预览:\n" +
       JSON.stringify(installAdapter(config.agent.id, config), null, 2),
   );
-  if (interactive && options.detailed !== true) {
-    console.log("\n已使用安全默认值；需要逐项配置运行信息时可重新执行 setup --detailed。");
-  }
   if (!options.apply && !interactive) {
     console.log("\n以上为预览；确认后添加 --apply。");
     return;

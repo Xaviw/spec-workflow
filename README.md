@@ -8,7 +8,7 @@
 
 1. 复制本模板并在目录中初始化 Git 仓库。
 2. 从仓库根目录启动支持的 Agent；若没有自动读取入口，发送：`请读取 AGENTS.md，并执行 sw-setup。`
-3. 按提示填写项目目标、Agent、Git 邮箱和代码仓库根目录。默认流程只询问必要信息；需要端口、环境和联调细项时运行 `node tools/workflow.js setup --detailed`。
+3. Agent 探测目标仓库，并按提示确认项目目标、Agent、代码仓库及其启动、环境和联调信息。
 4. 运行 `node tools/workflow.js doctor`，确认输出为 `阻塞 0`。
 5. 创建迭代和任务：
 
@@ -40,6 +40,26 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 PRD 使用 `AC-001` 等稳定验收 ID。技术方案和 spec 必须覆盖全部 AC；验证记录为每个 AC 写 `pass`、`human-confirmed`、`waived`、`failed` 或 `unverified`。通过状态必须有证据，豁免必须有理由。
 
 确认后修改上游文档会自动使相关 checkpoint 变为 stale，不能仅靠再次添加 `--confirmed` 跳过。`task.json.revision` 用于并发保护，长流程可传 `--expected-revision <n>`。
+
+## 术语参考
+
+| 术语 | 含义 |
+| --- | --- |
+| grilling | 通过拷问澄清需求。 |
+| AC / `AC-001` | 验收标准及其稳定 ID。 |
+| checkpoint | 已确认阶段产物及依赖的快照。 |
+| `revision` | 防止并发覆盖的修改计数器。 |
+| `fresh` / `stale` | checkpoint 有效或已失效。 |
+| Slice | 可独立推进的实施增量。 |
+| DAG | 无循环的依赖图。 |
+| artifact | 工作流产物。 |
+| DDL | 数据库结构定义语句。 |
+| canonical root | 仓库的真实根目录。 |
+| baseline HEAD | 实施开始时的仓库提交。 |
+| verification tree / delivery tree | 验证后的交付内容。 |
+| fingerprint | 发布来源状态的摘要。 |
+| receipt | 确认或收口的结构化凭据。 |
+| `pass` / `human-confirmed` / `waived` / `failed` / `unverified` | 通过、人工确认、豁免、失败或未验证。 |
 
 ## 日常命令
 

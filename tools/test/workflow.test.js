@@ -38,7 +38,7 @@ import { aggregateRelease } from "../workflow/release.js";
 import {
   assertRepositoryRegistration,
   assertPortableRepositoryId,
-  collectDetailedRepositoryConfig,
+  collectRepositoryConfig,
   inspectRepositoryRoot,
   sanitizeGitRemote,
   validateSetupConfig,
@@ -154,6 +154,7 @@ test("CLI 参数严格区分布尔和值选项", () => {
   });
   assert.throws(() => parseCliArgs(["doctor", "--json", "false"]), /不接受/);
   assert.throws(() => parseCliArgs(["setup", "--config"]), /缺少值/);
+  assert.throws(() => parseCliArgs(["setup", "--detailed"]), /未知选项/);
   assert.throws(() => parseCliArgs(["doctor", "--unknown"]), /未知选项/);
 });
 
@@ -287,7 +288,7 @@ test("setup 使用 canonical Git 根并拒绝子目录、重复路径和 remote 
     "",
     "",
   ];
-  const detailed = await collectDetailedRepositoryConfig(
+  const configured = await collectRepositoryConfig(
     { question: async () => answers.shift() },
     {
       ...repositoryConfig("api", repository),
@@ -295,14 +296,14 @@ test("setup 使用 canonical Git 根并拒绝子目录、重复路径和 remote 
     },
     { startCommand: "npm start", runtime: ">=22", envVarNames: [] },
   );
-  assert.equal(detailed.start.port, 3100);
-  assert.equal(detailed.id, "api");
+  assert.equal(configured.start.port, 3100);
+  assert.equal(configured.id, "api");
   const clearAnswers = [
     "-", "", "-", "-", "-", "", "", "", "", "", "", "",
   ];
-  const cleared = await collectDetailedRepositoryConfig(
+  const cleared = await collectRepositoryConfig(
     { question: async () => clearAnswers.shift() },
-    { ...detailed, modules: ["server"] },
+    { ...configured, modules: ["server"] },
     { startCommand: "npm start", runtime: ">=22", envVarNames: [] },
   );
   assert.deepEqual(cleared.modules, []);
@@ -531,7 +532,6 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     schema_version: 1,
     project: { name: "测试项目", goal: "验证完整 CLI" },
     agent: { id: "claude-code" },
-    git_emails: ["test@example.com"],
     repositories: [
       {
         id: "backend",
@@ -582,7 +582,12 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
 
-  run("setup", "--config", configPath, "--apply");
+  const setupOutput = run("setup", "--config", configPath, "--apply");
+  assert.doesNotMatch(setupOutput, /test@example\.com/);
+  const localConfig = extractManagedJson(
+    readFileSync(join(workflow, "AGENTS.local.md"), "utf8"),
+  );
+  assert.deepEqual(localConfig.git_emails, ["test@example.com"]);
   assert.match(run("doctor"), /阻塞 0/);
   const legacySkill = join(
     workflow,

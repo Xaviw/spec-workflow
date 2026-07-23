@@ -1,6 +1,6 @@
 ---
 name: sw-setup
-description: 初始化或更新 spec-driven-template 工作流仓库。首次使用、AGENTS.local.md 缺失、代码仓库映射变化、Agent 接入变化，或用户要求配置项目时使用。
+description: 初始化或更新 spec-driven-template 工作流仓库，并在完成后运行 doctor 验证。当前请求需要运行工作流但必要配置缺失、代码仓库映射或 Agent 接入发生变化，或用户要求初始化、更新配置时使用。
 ---
 
 # 初始化工作流
@@ -17,13 +17,11 @@ description: 初始化或更新 spec-driven-template 工作流仓库。首次使
 
 ## 流程
 
-1. 运行 `node tools/workflow.js setup`；只有用户要求逐项配置运行环境时才使用 `setup --detailed`。完成：CLI 已加载现有配置并给出待确认项。
-2. 复用已有项目、Agent、Git 邮箱和仓库配置，让 CLI 探测可验证事实，只询问无法确定的选择。默认确认：
+1. 运行 `node tools/workflow.js setup`。完成：CLI 已加载现有配置并给出待确认项。
+2. 复用已有项目、Agent 和仓库配置，让 CLI 探测可验证事实，只询问无法确定的选择。确认：
    - 项目名称和目标；
    - 当前使用的 Agent；
-   - 用户 Git 邮箱；
-   - 每个代码仓库的稳定 ID、精确 Git 根目录和角色。
-   detailed 模式再确认：
+   - 每个代码仓库的稳定 ID、精确 Git 根目录、角色和主要模块；
    - 启动命令、启动端口、可选运行时版本；
    - 环境变量名、配置中心或外部服务依赖；
    - 联调方式，例如直接改代码或使用 Whistle；

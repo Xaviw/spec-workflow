@@ -60,7 +60,6 @@ const BOOLEAN_CLI_OPTIONS = new Set([
   "template",
   "json",
   "confirmed",
-  "detailed",
 ]);
 const VALUE_CLI_OPTIONS = new Set([
   "config",
