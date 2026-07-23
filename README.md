@@ -7,7 +7,7 @@
 要求 Git 和 Node.js 22.12.0 或更高版本。
 
 1. 复制本模板并在目录中初始化 Git 仓库。
-2. 从仓库根目录启动支持的 Agent；若没有自动读取入口，发送：`请读取 AGENTS.md，并执行 spec-driven-setup。`
+2. 从仓库根目录启动支持的 Agent；若没有自动读取入口，发送：`请读取 AGENTS.md，并执行 sw-setup。`
 3. 按提示填写项目目标、Agent、Git 邮箱和代码仓库根目录。默认流程只询问必要信息；需要端口、环境和联调细项时运行 `node tools/workflow.js setup --detailed`。
 4. 运行 `node tools/workflow.js doctor`，确认输出为 `阻塞 0`。
 5. 创建迭代和任务：
@@ -57,6 +57,8 @@ node tools/workflow.js doctor
 
 `task slices` 的 JSON 是数组，每项包含 `id`、`title`、`status: "pending"` 和 `blocked_by`。Slice 只在 implementation_spec 定义，只在 implementation 按 `pending -> in_progress -> done` 推进；最多一个进行中，依赖完成后才能启动。
 
+全局强制规则和读取条件统一写在 `AGENTS.md`。详细规范位于根目录 `standards/`；Agent 只在任务命中 API、安全、数据库、Redis、对象存储或日志条件时读取相关文件，不批量加载。任务不保存规范绑定和完整规则清单；规则或例外实质影响实施时，才在 `spec.md` 对应步骤就地记录并随实施方案确认。
+
 删除、移动和适配器替换默认只预览，确认目标后添加 `--apply`。`done` 和 `cancelled` 是终态；开放迭代中需要修订时使用 `task reopen <task> <phase> --reason "..." --confirmed`，已结束迭代则新建关联任务。
 
 ## 多仓交付
@@ -104,6 +106,7 @@ node tools/workflow.js iteration done <iteration-id> --confirmed
 AGENTS.md                  跨 Agent 最小入口
 .agents/skills/            分阶段 Skills
 tools/                     无第三方依赖的 Node.js CLI
+standards/                 由 AGENTS.md 按任务内容路由的工程规范
 project/                   setup 生成的项目事实
 iterations/                迭代、任务和发布记录
 AGENTS.local.md            本地配置，不提交
@@ -118,4 +121,4 @@ npm test
 
 文本产物统一以 LF 提交，checkpoint hash 会规范化本地 CRLF/LF 差异。
 
-升级模板时只合并上游 `AGENTS.md`、`.agents/skills/`、`tools/` 和 `.gitattributes`，保留 `project/`、`iterations/` 与 `AGENTS.local.md`，再运行测试和 doctor。项目特殊规则写入可选的 `project/policies.md`。
+升级模板时合并上游 `AGENTS.md`、`.agents/skills/`、`standards/`、`tools/` 和 `.gitattributes`，保留 `project/`、`iterations/` 与 `AGENTS.local.md`，再运行测试和 doctor。`standards/` 随模板版本更新；合并时像代码变更一样审阅规范差异。

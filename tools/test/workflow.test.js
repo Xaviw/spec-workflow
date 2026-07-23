@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readdirSync,
@@ -82,7 +83,7 @@ test("阶段只能顺序前进，回退必须说明原因", () => {
 test("上下文 dry-run 不带入其他任务或全部项目知识", (t) => {
   const root = temporaryDirectory(t);
   const task = join(root, "iterations", "i", "task-a");
-  mkdirSync(join(root, ".agents", "skills", "spec-driven-prd"), {
+  mkdirSync(join(root, ".agents", "skills", "sw-prd"), {
     recursive: true,
   });
   mkdirSync(task, { recursive: true });
@@ -105,15 +106,15 @@ test("上下文 dry-run 不带入其他任务或全部项目知识", (t) => {
     context: [{ file: "project/knowledge/api.md" }],
   });
   writeFileSync(
-    join(root, ".agents", "skills", "spec-driven-prd", "SKILL.md"),
+    join(root, ".agents", "skills", "sw-prd", "SKILL.md"),
     "# S\n\n## 上下文契约\n\n必读：`task.json`、`prd.md`、`decisions.md`。\n\n按需读取：相关项目文档。\n\n初始禁止：其他任务。\n\n输出：当前 PRD。\n",
     "utf8",
   );
-  const context = buildContextPaths("spec-driven-prd", task, root);
+  const context = buildContextPaths("sw-prd", task, root);
   assert.ok(context.required.includes("iterations/i/task-a/prd.md"));
   assert.ok(context.required.includes("AGENTS.local.md"));
   assert.ok(context.required.includes("project/repositories/backend.md"));
-  assert.ok(context.required.includes("project/knowledge/api.md"));
+  assert.ok(!context.required.includes("project/knowledge/api.md"));
   assert.deepEqual(context.missing, [
     "iterations/i/task-a/prd.md",
     "iterations/i/task-a/decisions.md",
@@ -121,7 +122,7 @@ test("上下文 dry-run 不带入其他任务或全部项目知识", (t) => {
   assert.ok(!context.required.some((path) => path.includes("other-task")));
   assert.deepEqual(
     context.required.filter((path) => path.startsWith("project/knowledge/")),
-    ["project/knowledge/api.md"],
+    [],
   );
   const outside = temporaryDirectory(t);
   const linkedPrd = join(task, "prd.md");
@@ -131,13 +132,13 @@ test("上下文 dry-run 不带入其他任务或全部项目知识", (t) => {
     process.platform === "win32" ? "junction" : "dir",
   );
   assert.throws(
-    () => buildContextPaths("spec-driven-prd", task, root),
+    () => buildContextPaths("sw-prd", task, root),
     /路径超出/,
   );
   rmSync(linkedPrd, { recursive: true, force: true });
   writeJson(join(task, "task.json"), { repositories: ["../outside"] });
   assert.throws(
-    () => buildContextPaths("spec-driven-prd", task, root),
+    () => buildContextPaths("sw-prd", task, root),
     /路径超出/,
   );
 });
@@ -411,8 +412,17 @@ test("本地受管块保留用户文字，并拒绝保存密钥值", () => {
 
 test("所有 Skill 只有标准 frontmatter，且没有初始化占位", () => {
   const root = join(import.meta.dirname, "..", "..");
+  const skillRoot = join(root, ".agents", "skills");
+  assert.deepEqual(
+    readdirSync(skillRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort(),
+    [...SKILLS].sort(),
+  );
   for (const skill of SKILLS) {
-    const path = join(root, ".agents", "skills", skill, "SKILL.md");
+    assert.match(skill, /^sw-/);
+    const path = join(skillRoot, skill, "SKILL.md");
     const content = readFileSync(path, "utf8");
     const frontmatter = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
     assert.ok(frontmatter, skill + " 缺少 frontmatter");
@@ -421,10 +431,41 @@ test("所有 Skill 只有标准 frontmatter，且没有初始化占位", () => {
       .filter(Boolean)
       .map((line) => line.slice(0, line.indexOf(":")));
     assert.deepEqual(keys, ["name", "description"]);
+    assert.match(frontmatter[1], new RegExp("^name: " + skill + "$", "m"));
     assert.match(content, /[\u4e00-\u9fff]/);
     assert.doesNotMatch(content, /\[TODO|Structuring This Skill/);
     assert.ok(content.split(/\r?\n/).length < 500);
   }
+});
+
+test("阶段 Skill 显式交接到下一阶段", () => {
+  const root = join(import.meta.dirname, "..", "..", ".agents", "skills");
+  for (const [current, next] of [
+    ["sw-prd", "sw-technical-design"],
+    ["sw-technical-design", "sw-spec"],
+    ["sw-spec", "sw-implement"],
+    ["sw-implement", "sw-verify"],
+  ]) {
+    const content = readFileSync(join(root, current, "SKILL.md"), "utf8");
+    assert.match(content, new RegExp("`" + next + "`"));
+  }
+});
+
+test("辅助 Skill 只能由用户显式调用", () => {
+  const root = join(import.meta.dirname, "..", "..");
+  const skill = join(
+    root,
+    ".agents",
+    "skills",
+    "sw-writing-great-skills",
+  );
+  const instructions = readFileSync(join(skill, "SKILL.md"), "utf8");
+  const metadata = readFileSync(join(skill, "agents", "openai.yaml"), "utf8");
+  assert.match(instructions, /description: 仅当用户明确调用/);
+  assert.match(
+    metadata,
+    /\npolicy:\r?\n  allow_implicit_invocation: false\r?\n?$/,
+  );
 });
 
 test("Trae 和 OpenCode 原生接入标准入口与 Skills", () => {
@@ -463,6 +504,9 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     join(workflow, "tools", "workflow"),
     { recursive: true },
   );
+  cpSync(join(sourceRoot, "standards"), join(workflow, "standards"), {
+    recursive: true,
+  });
   for (const directory of [workflow, target, frontend]) {
     execFileSync("git", ["init", "-q"], { cwd: directory });
     execFileSync("git", ["config", "user.name", "Test User"], {
@@ -540,6 +584,30 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
 
   run("setup", "--config", configPath, "--apply");
   assert.match(run("doctor"), /阻塞 0/);
+  const legacySkill = join(
+    workflow,
+    ".claude",
+    "skills",
+    "spec-driven-prd",
+  );
+  mkdirSync(legacySkill, { recursive: true });
+  writeFileSync(join(legacySkill, "SKILL.md"), "旧适配内容\n", "utf8");
+  assert.throws(() => run("doctor"));
+  const legacyPlan = run("adapter", "install", "--agent", "claude-code");
+  assert.match(legacyPlan, /"action": "conflict"/);
+  assert.throws(() =>
+    run("adapter", "install", "--agent", "claude-code", "--apply"),
+  );
+  run(
+    "adapter",
+    "install",
+    "--agent",
+    "claude-code",
+    "--replace",
+    "--apply",
+  );
+  assert.equal(existsSync(legacySkill), false);
+  assert.match(run("doctor"), /阻塞 0/);
   const projectIndex = join(workflow, "project", "index.md");
   const projectIndexContent = readFileSync(projectIndex, "utf8");
   rmSync(projectIndex);
@@ -551,7 +619,7 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     workflow,
     ".claude",
     "skills",
-    "spec-driven-prd",
+    "sw-prd",
   );
   rmSync(conflictingSkill, { recursive: true, force: true });
   mkdirSync(conflictingSkill, { recursive: true });
@@ -839,7 +907,7 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
   );
   assert.equal(JSON.parse(run("task", "validate", taskPath, "--json")).valid, true);
   assert.doesNotThrow(() =>
-    run("context", "spec-driven-code-review", "--json"),
+    run("context", "sw-code-review", "--json"),
   );
   execFileSync("git", ["add", "feature.txt"], { cwd: target });
   execFileSync("git", ["commit", "-q", "-m", "feat: add interface"], {
@@ -929,7 +997,7 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
   const releaseContext = JSON.parse(
     run(
       "context",
-      "spec-driven-release-plan",
+      "sw-release-plan",
       "--iteration",
       iterationId,
       "--json",

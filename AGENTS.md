@@ -6,7 +6,7 @@
 
 1. 始终使用简体中文沟通、编写文档和注释；代码标识符遵循目标仓库约定。
 2. 若根目录存在 `AGENTS.local.md`，先读取其中的本地配置。不得提交、复述或猜测其中的敏感信息。
-3. 首次使用、配置缺失或 doctor 报告不兼容时，调用 `spec-driven-setup`；默认 setup 只询问必要信息，需要逐项配置运行环境时使用 `setup --detailed`。只读诊断调用 `spec-driven-doctor`。
+3. 首次使用、配置缺失或 doctor 报告不兼容时，调用 `sw-setup`；默认 setup 只询问必要信息，需要逐项配置运行环境时使用 `setup --detailed`。只读诊断调用 `sw-doctor`。
 4. Node.js 最低版本为 22.12.0。统一 CLI 入口是 `node tools/workflow.js`。
 5. 若 Agent 不支持原生 Skill 调用，直接读取对应 `.agents/skills/<name>/SKILL.md` 并遵循其中流程。
 
@@ -14,13 +14,37 @@
 
 默认只读取：本文件、`AGENTS.local.md`、用户明确指定的任务 `task.json`，以及当前步骤对应的一个 Skill。
 
-禁止在开始时批量读取：其他任务、全部迭代、全部项目知识、全部 Skill、全部目标仓库。仅在当前 Skill 的“按需读取”条件命中时扩展上下文。
+禁止在开始时批量读取：其他任务、全部迭代、全部规范、全部 Skill、全部目标仓库。仅在当前 Skill 的“按需读取”条件命中时扩展上下文。
+
+## 工程规范
+
+以下规则始终生效：
+
+- 不得在代码、测试、日志、任务文档或提交记录中保存明文凭据；只记录环境变量名、依赖和获取方式。
+- 认证、授权、租户和数据范围必须由服务端可信身份决定，不得信任客户端传入的身份归属。
+- 工作流只设计和静态审查 DDL，不执行 DDL、生产写入或不可逆数据操作。
+- 敏感信息保护优先于日志完整性，不得为排障记录令牌、口令、私钥或完整个人敏感信息。
+- 目标仓库明确记录的规则优先；与根目录规范冲突且影响实施时，在 `spec.md` 对应步骤记录取舍并随实施方案取得用户确认，不得静默选择。
+
+详细规范位于根目录 `standards/`。不得批量读取；仅在任务命中下列条件时读取直接相关文档：
+
+| 触发条件 | 读取文档 |
+| --- | --- |
+| 新增或修改 API、错误码、公共字段、接口版本 | `standards/api-contract.md` |
+| Token、认证、权限、Cookie、个人信息或其他安全边界 | `standards/security.md` |
+| 请求签名、验签、防重放或签名加密协议 | `standards/security.md`、`standards/api-signing-v2.md` |
+| 表结构、索引、事务、SQL 或数据迁移 | `standards/mysql.md` |
+| Redis、缓存、分布式锁或限流计数 | `standards/redis.md` |
+| 上传、下载、对象存储、STS 或 CDN | `standards/security.md`、`standards/object-storage.md` |
+| 日志、requestId、链路、告警或审计 | `standards/logging.md`、`standards/security.md` |
+
+不维护任务级规范绑定或完整规则清单。规则或例外实质影响某个实施步骤、审查发现或验证动作时，才在 `spec.md` 对应步骤或发现位置就地记录并按需引用规则 ID。
 
 ## 任务路由
 
 1. 用户明确给出任务 ID、路径、链接或本轮已选定唯一任务时，直接进入该任务，不再搜索相关任务。
-2. 用户未明确任务时，调用 `spec-driven-route-task`，同时判断简单任务/工作流任务并筛选相关任务。
-3. 简单任务调用 `spec-driven-simple-change`。命中数据库结构或迁移、安全或权限、公共契约、生产环境或不可逆操作时，不得降级为简单任务。
+2. 用户未明确任务时，调用 `sw-route-task`，同时判断简单任务/工作流任务并筛选相关任务。
+3. 简单任务调用 `sw-simple-change`。命中数据库结构或迁移、安全或权限、公共契约、生产环境或不可逆操作时，不得降级为简单任务。
 4. 新建工作流任务前，必须让用户明确选择已有开放迭代或新建迭代。
 5. 不保存“当前活动任务”指针；新会话不得从未提交状态猜测用户当前任务。
 
@@ -28,11 +52,11 @@
 
 | `task.json.phase` | Skill |
 | --- | --- |
-| `prd` | `spec-driven-prd` |
-| `technical_design` | `spec-driven-technical-design` |
-| `implementation_spec` | `spec-driven-spec` |
-| `implementation` | `spec-driven-implement` |
-| `verification` | `spec-driven-verify` |
+| `prd` | `sw-prd` |
+| `technical_design` | `sw-technical-design` |
+| `implementation_spec` | `sw-spec` |
+| `implementation` | `sw-implement` |
+| `verification` | `sw-verify` |
 | `done` / `cancelled` | 只读；相关后续按规则重开或新建任务 |
 
 阶段依次为：`prd -> technical_design -> implementation_spec -> implementation -> verification -> done`。向前推进前必须取得用户对上一阶段文档的明确确认。不得自动进入 `done`。

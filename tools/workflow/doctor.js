@@ -12,6 +12,7 @@ import {
   fingerprint,
   findSecretPaths,
   isGitRepository,
+  legacySkillName,
   listIterationDirectories,
   readJson,
   readText,
@@ -416,6 +417,13 @@ export function runDoctor(options = {}, root = ROOT) {
     "tools/workflow.js",
     "tools/agent-adapters.json",
     "tools/package.json",
+    "standards/logging.md",
+    "standards/security.md",
+    "standards/api-contract.md",
+    "standards/api-signing-v2.md",
+    "standards/mysql.md",
+    "standards/redis.md",
+    "standards/object-storage.md",
   ]) {
     add(existsSync(join(root, path)) ? "ok" : "error", "核心文件 " + path);
   }
@@ -523,6 +531,23 @@ export function runDoctor(options = {}, root = ROOT) {
         add(
           linkPointsTo(target, source) || sameSkill(source, target) ? "ok" : "error",
           definition.display_name + " Skill " + skill,
+        );
+      }
+      const legacySkills = SKILLS.filter((skill) => {
+        const legacy = legacySkillName(skill);
+        const legacyTarget = join(targetRoot, legacy);
+        const legacySource = join(root, ".agents", "skills", legacy);
+        return (
+          existsSync(legacyTarget) ||
+          linkPointsTo(legacyTarget, legacySource)
+        );
+      });
+      if (legacySkills.length) {
+        add(
+          "error",
+          definition.display_name + " 存在 " + legacySkills.length +
+            " 个旧名称 Skill；先预览 adapter install --agent " + definition.id +
+            "，确认后添加 --replace --apply",
         );
       }
       const ignoredEntry = runGit(

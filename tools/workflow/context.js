@@ -131,17 +131,6 @@ export function buildContextPaths(
           ),
         );
       }
-      for (const entry of task.context || []) {
-        if (entry?.file) {
-          required.push(
-            ensureExistingWithin(root, resolve(root, String(entry.file))),
-          );
-        }
-      }
-    }
-    const policiesPath = join(root, "project", "policies.md");
-    if (existsSync(policiesPath)) {
-      required.push(policiesPath);
     }
   }
   const uniqueRequired = [

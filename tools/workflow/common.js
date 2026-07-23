@@ -96,18 +96,23 @@ export const PHASES = [
 export const TASK_TYPES = ["feature", "bug", "change", "maintenance"];
 
 export const SKILLS = [
-  "spec-driven-setup",
-  "spec-driven-doctor",
-  "spec-driven-route-task",
-  "spec-driven-simple-change",
-  "spec-driven-prd",
-  "spec-driven-technical-design",
-  "spec-driven-spec",
-  "spec-driven-implement",
-  "spec-driven-code-review",
-  "spec-driven-verify",
-  "spec-driven-release-plan",
+  "sw-setup",
+  "sw-doctor",
+  "sw-route-task",
+  "sw-simple-change",
+  "sw-prd",
+  "sw-technical-design",
+  "sw-spec",
+  "sw-implement",
+  "sw-code-review",
+  "sw-verify",
+  "sw-release-plan",
+  "sw-writing-great-skills",
 ];
+
+export function legacySkillName(skill) {
+  return "spec-driven-" + skill.slice(3);
+}
 
 export function readText(path, fallback = "") {
   return existsSync(path) ? readFileSync(path, "utf8") : fallback;
