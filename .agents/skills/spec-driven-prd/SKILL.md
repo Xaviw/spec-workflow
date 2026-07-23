@@ -42,8 +42,18 @@ description: 通过批量 grilling 澄清原始需求，创建或更新任务的
 
 将原始需求与 grilling 结论综合成可读文本，不另存原始需求副本。需求改变时直接更新当前 PRD；Git 负责保留历史。
 
+为每条验收标准分配稳定 ID，从 `AC-001` 开始。优先使用三级标题并写出可观察结果，例如：
+
+```markdown
+### AC-001 <可验证行为>
+
+<前置条件、动作和预期结果>
+```
+
+不要在后续阶段重编号已确认 ID；删除或替代时在 `decisions.md` 记录原因。
+
 ## 决策记录
 
 仅把影响范围、行为、兼容性或验收的关键选择追加到 `decisions.md`。每项写日期、决定、理由、影响；被替代时追加“取代哪项”，不改写旧记录。
 
-完成后逐条检查验收标准是否可验证。向用户展示关键结论和未决问题；只有用户明确确认 PRD，才运行 `task phase <task> technical_design --confirmed`。
+完成后运行 `task validate <task>`，逐条检查验收标准是否可验证。向用户展示关键结论和未决问题；只有用户明确确认 PRD，才使用 `task status` 返回的 revision 运行 `task phase <task> technical_design --expected-revision <n> --confirmed`。

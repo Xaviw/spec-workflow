@@ -7,7 +7,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
   ROOT,
@@ -16,6 +16,7 @@ import {
   readJson,
   readText,
   replaceTextBlock,
+  runGit,
   workflowPath,
   writeText,
 } from "./common.js";
@@ -24,6 +25,24 @@ const ADAPTER_START = "<!-- spec-driven:adapter:start -->";
 const ADAPTER_END = "<!-- spec-driven:adapter:end -->";
 const EXCLUDE_START = "# spec-driven:adapter:start";
 const EXCLUDE_END = "# spec-driven:adapter:end";
+const SYMLINK_FALLBACK_ERRORS = new Set([
+  "EACCES",
+  "EPERM",
+  "EINVAL",
+  "ENOTSUP",
+]);
+
+function entryExists(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
 
 export function adapterDefinition(agentId, config) {
   const table = readJson(join(ROOT, "tools", "agent-adapters.json"));
@@ -62,7 +81,7 @@ export function sameSkill(source, target) {
 }
 
 export function linkPointsTo(path, expected) {
-  if (!existsSync(path) || !lstatSync(path).isSymbolicLink()) {
+  if (!entryExists(path) || !lstatSync(path).isSymbolicLink()) {
     return false;
   }
   return resolve(dirname(path), readlinkSync(path)) === resolve(expected);
@@ -90,7 +109,7 @@ export function installAdapter(agentId, config, options = {}) {
   }));
   const conflicts = skillTargets.filter(
     ({ source, target }) =>
-      existsSync(target) && !linkPointsTo(target, source) && !sameSkill(source, target),
+      entryExists(target) && !linkPointsTo(target, source) && !sameSkill(source, target),
   );
   if (apply && !replace && conflicts.length) {
     throw new Error(
@@ -119,7 +138,7 @@ export function installAdapter(agentId, config, options = {}) {
     mkdirSync(targetRoot, { recursive: true });
   }
   for (const { source, target } of skillTargets) {
-    if (existsSync(target)) {
+    if (entryExists(target)) {
       if (linkPointsTo(target, source) || sameSkill(source, target)) {
         actions.push({ action: "ok", path: relative(ROOT, target) });
         continue;
@@ -145,8 +164,14 @@ export function installAdapter(agentId, config, options = {}) {
       continue;
     }
     try {
-      symlinkSync(source, target, process.platform === "win32" ? "junction" : "dir");
-    } catch {
+      const linkTarget = process.platform === "win32"
+        ? source
+        : relative(dirname(target), source) || ".";
+      symlinkSync(linkTarget, target, process.platform === "win32" ? "junction" : "dir");
+    } catch (error) {
+      if (!SYMLINK_FALLBACK_ERRORS.has(error.code)) {
+        throw error;
+      }
       cpSync(source, target, { recursive: true });
       actions[actions.length - 1].method = "copy";
     }
@@ -161,7 +186,8 @@ export function ensureAdapterIgnored(agentId, config) {
   }
   const entry = relative(ROOT, workflowPath(definition.adapter.entry_path)).replaceAll("\\", "/");
   const skills = relative(ROOT, workflowPath(definition.adapter.skills_path)).replaceAll("\\", "/");
-  const excludeFile = join(ROOT, ".git", "info", "exclude");
+  const gitPath = runGit(["rev-parse", "--git-path", "info/exclude"], ROOT);
+  const excludeFile = isAbsolute(gitPath) ? gitPath : resolve(ROOT, gitPath);
   const patterns = ["/" + entry, "/" + skills + "/spec-driven-*/"].join("\n");
   writeText(
     excludeFile,

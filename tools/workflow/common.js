@@ -1,15 +1,25 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
+  fchmodSync,
+  fsyncSync,
+  lstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import {
   basename,
   dirname,
+  extname,
   isAbsolute,
   join,
   relative,
@@ -18,11 +28,62 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+function canonicalBoundaryPath(path) {
+  const absolute = resolve(path);
+  let ancestor = absolute;
+  const missing = [];
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor);
+    if (parent === ancestor) {
+      break;
+    }
+    missing.unshift(basename(ancestor));
+    ancestor = parent;
+  }
+  const canonicalAncestor = existsSync(ancestor)
+    ? realpathSync.native(ancestor)
+    : ancestor;
+  return resolve(canonicalAncestor, ...missing);
+}
+
+export const ROOT = canonicalBoundaryPath(
+  resolve(dirname(fileURLToPath(import.meta.url)), "../.."),
+);
 export const ITERATIONS_DIR = join(ROOT, "iterations");
 export const LOCAL_CONFIG_FILE = join(ROOT, "AGENTS.local.md");
 const LOCAL_START = "<!-- spec-driven:local-config:start -->";
 const LOCAL_END = "<!-- spec-driven:local-config:end -->";
+const BOOLEAN_CLI_OPTIONS = new Set([
+  "help",
+  "apply",
+  "replace",
+  "template",
+  "json",
+  "confirmed",
+  "detailed",
+]);
+const VALUE_CLI_OPTIONS = new Set([
+  "config",
+  "agent",
+  "title",
+  "goal",
+  "target-version",
+  "iteration",
+  "summary",
+  "type",
+  "slug",
+  "repositories",
+  "modules",
+  "related",
+  "reason",
+  "commit",
+  "baseline",
+  "verification",
+  "project-docs",
+  "task",
+  "phase",
+  "expected-revision",
+]);
 
 export const PHASES = [
   "prd",
@@ -57,13 +118,140 @@ export function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function fsyncDirectory(directory) {
+  let descriptor;
+  try {
+    descriptor = openSync(directory, "r");
+    fsyncSync(descriptor);
+  } catch {
+    // Windows 和部分文件系统不支持打开或同步目录。
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // 目录同步仅作尽力保证。
+      }
+    }
+  }
+}
+
 export function writeText(path, content) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, content.endsWith("\n") ? content : content + "\n", "utf8");
+  const directory = dirname(path);
+  mkdirSync(directory, { recursive: true });
+  const temporaryPath = join(
+    directory,
+    `.spec-workflow-${process.pid}-${randomUUID()}.tmp`,
+  );
+  const existingMode = existsSync(path) ? statSync(path).mode & 0o777 : null;
+  const mode = existingMode ?? 0o666;
+  const value = content.endsWith("\n") ? content : content + "\n";
+  let descriptor;
+
+  try {
+    descriptor = openSync(temporaryPath, "wx", mode);
+    writeFileSync(descriptor, value, "utf8");
+    if (existingMode !== null && process.platform !== "win32") {
+      fchmodSync(descriptor, existingMode);
+    }
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporaryPath, path);
+    fsyncDirectory(directory);
+  } finally {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } catch {
+        // 保留原始写入错误，并继续尝试清理临时文件。
+      }
+    }
+    rmSync(temporaryPath, { force: true });
+  }
 }
 
 export function writeJson(path, value) {
   writeText(path, JSON.stringify(value, null, 2));
+}
+
+function acquireFileLock(path) {
+  mkdirSync(dirname(path), { recursive: true });
+  let descriptor;
+  try {
+    descriptor = openSync(path, "wx", 0o600);
+    writeFileSync(
+      descriptor,
+      JSON.stringify({ pid: process.pid, created_at: new Date().toISOString() }),
+      "utf8",
+    );
+    fsyncSync(descriptor);
+    return { descriptor, path };
+  } catch (error) {
+    if (descriptor !== undefined) {
+      try {
+        closeSync(descriptor);
+      } finally {
+        rmSync(path, { force: true });
+      }
+    }
+    if (error.code !== "EEXIST") {
+      throw error;
+    }
+    let stale = false;
+    try {
+      const lock = JSON.parse(readFileSync(path, "utf8"));
+      const pid = Number(lock.pid);
+      if (Number.isInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+        } catch (processError) {
+          stale = processError.code === "ESRCH";
+        }
+      } else {
+        stale = Date.now() - statSync(path).mtimeMs > 5 * 60 * 1000;
+      }
+    } catch (readError) {
+      if (!existsSync(path)) {
+        return acquireFileLock(path);
+      }
+      stale = Date.now() - statSync(path).mtimeMs > 5 * 60 * 1000;
+    }
+    if (stale) {
+      rmSync(path, { force: true });
+      return acquireFileLock(path);
+    }
+    throw new Error("工作流状态正被另一个进程修改，请稍后重试: " + basename(path));
+  }
+}
+
+function releaseFileLock(lock) {
+  try {
+    closeSync(lock.descriptor);
+  } finally {
+    rmSync(lock.path, { force: true });
+  }
+}
+
+export function withFileLocks(paths, callback) {
+  const ordered = [...new Set(paths.map((path) => resolve(path)))].sort();
+  function visit(index) {
+    if (index >= ordered.length) {
+      return callback();
+    }
+    const lock = acquireFileLock(ordered[index]);
+    try {
+      return visit(index + 1);
+    } finally {
+      releaseFileLock(lock);
+    }
+  }
+  return visit(0);
+}
+
+export function iterationLockPath(iterationDirectory) {
+  const directory = resolve(iterationDirectory);
+  return join(dirname(directory), "." + basename(directory) + ".iteration.lock");
 }
 
 export function today(date = new Date()) {
@@ -95,17 +283,45 @@ export function uniqueDirectory(parent, wanted) {
 }
 
 export function ensureWithin(base, target) {
-  const resolvedBase = resolve(base);
-  const resolvedTarget = resolve(target);
-  const rel = relative(resolvedBase, resolvedTarget);
-  if (rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
+  const resolvedBase = canonicalBoundaryPath(base);
+  const absoluteTarget = resolve(target);
+  const resolvedTarget = absoluteTarget === resolve(base)
+    ? resolvedBase
+    : resolve(canonicalBoundaryPath(dirname(absoluteTarget)), basename(absoluteTarget));
+  return assertWithin(resolvedBase, resolvedTarget);
+}
+
+function assertWithin(resolvedBase, resolvedTarget) {
+  const prefix = resolvedBase.endsWith(sep)
+    ? resolvedBase
+    : resolvedBase + sep;
+  if (resolvedTarget !== resolvedBase && !resolvedTarget.startsWith(prefix)) {
     throw new Error("路径超出工作流边界: " + resolvedTarget);
   }
   return resolvedTarget;
 }
 
+export function ensureExistingWithin(base, target) {
+  return assertWithin(
+    canonicalBoundaryPath(base),
+    canonicalBoundaryPath(target),
+  );
+}
+
 export function workflowPath(path) {
-  return ensureWithin(ROOT, resolve(ROOT, path));
+  const target = resolve(ROOT, path);
+  const safe = ensureWithin(ROOT, target);
+  try {
+    lstatSync(target);
+    if (existsSync(target)) {
+      ensureExistingWithin(ROOT, target);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  return safe;
 }
 
 function canonicalize(value) {
@@ -129,14 +345,39 @@ export function fingerprint(value) {
 }
 
 export function fileHash(path) {
-  return existsSync(path)
-    ? createHash("sha256").update(readFileSync(path)).digest("hex")
-    : null;
+  if (!existsSync(path)) {
+    return null;
+  }
+  const content = readFileSync(path);
+  const textExtensions = new Set([
+    ".js",
+    ".json",
+    ".jsonl",
+    ".md",
+    ".sql",
+    ".yaml",
+    ".yml",
+  ]);
+  const canonical = textExtensions.has(extname(path).toLowerCase())
+    ? content.toString("utf8").replace(/\r\n?/g, "\n")
+    : content;
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 export function parseCliArgs(args) {
   const positionals = [];
   const options = {};
+
+  function addOption(key, value) {
+    if (options[key] === undefined) {
+      options[key] = value;
+    } else if (Array.isArray(options[key])) {
+      options[key].push(value);
+    } else {
+      options[key] = [options[key], value];
+    }
+  }
+
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
     if (!value.startsWith("--")) {
@@ -144,15 +385,25 @@ export function parseCliArgs(args) {
       continue;
     }
     const key = value.slice(2);
-    const next = args[index + 1];
-    const optionValue = next && !next.startsWith("--") ? args[++index] : true;
-    if (options[key] === undefined) {
-      options[key] = optionValue;
-    } else if (Array.isArray(options[key])) {
-      options[key].push(optionValue);
-    } else {
-      options[key] = [options[key], optionValue];
+
+    if (BOOLEAN_CLI_OPTIONS.has(key)) {
+      const next = args[index + 1];
+      if (next !== undefined && /^(?:true|false)$/i.test(next)) {
+        throw new Error("布尔选项不接受 true/false 值: --" + key);
+      }
+      addOption(key, true);
+      continue;
     }
+    if (VALUE_CLI_OPTIONS.has(key)) {
+      const next = args[index + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new Error("选项缺少值: --" + key);
+      }
+      addOption(key, next);
+      index += 1;
+      continue;
+    }
+    throw new Error("未知选项: --" + key);
   }
   return { positionals, options };
 }
@@ -310,7 +561,7 @@ export function resolveIteration(reference, root = ROOT) {
     : reference.includes("/") || reference.includes("\\")
       ? resolve(root, reference)
       : join(root, "iterations", reference);
-  const safe = ensureWithin(join(root, "iterations"), path);
+  const safe = ensureExistingWithin(join(root, "iterations"), path);
   if (!existsSync(join(safe, "iteration.json"))) {
     throw new Error("找不到迭代: " + reference);
   }
@@ -324,7 +575,7 @@ export function resolveTask(reference, root = ROOT) {
   const direct = isAbsolute(reference) ? reference : resolve(root, reference);
   if (existsSync(direct)) {
     const directory = basename(direct) === "task.json" ? dirname(direct) : direct;
-    const safe = ensureWithin(join(root, "iterations"), directory);
+    const safe = ensureExistingWithin(join(root, "iterations"), directory);
     if (existsSync(join(safe, "task.json"))) {
       return safe;
     }

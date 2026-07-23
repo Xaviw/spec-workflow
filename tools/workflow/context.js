@@ -1,12 +1,15 @@
-import { existsSync, readdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 
 import {
   ROOT,
   SKILLS,
-  ensureWithin,
+  ensureExistingWithin,
+  readJson,
   readText,
 } from "./common.js";
+
+const DEFAULT_CONTEXT_BUDGET = 128 * 1024;
 
 export function buildContextPaths(
   skill,
@@ -14,6 +17,7 @@ export function buildContextPaths(
   root = ROOT,
   iterationDirectory = null,
 ) {
+  root = ensureExistingWithin(root, root);
   if (!SKILLS.includes(skill)) {
     throw new Error("未知 Skill: " + skill);
   }
@@ -34,6 +38,10 @@ export function buildContextPaths(
     join(root, "AGENTS.md"),
     skillPath,
   ];
+  const localConfigPath = join(root, "AGENTS.local.md");
+  if (existsSync(localConfigPath)) {
+    required.push(localConfigPath);
+  }
   const taskDocs = new Set([
     "task.json",
     "prd.md",
@@ -52,10 +60,13 @@ export function buildContextPaths(
       required.push(join(root, token));
     } else if (taskDocs.has(token)) {
       if (taskDirectory) {
-        const safeTask = ensureWithin(join(root, "iterations"), taskDirectory);
+        const safeTask = ensureExistingWithin(
+          join(root, "iterations"),
+          taskDirectory,
+        );
         required.push(join(safeTask, token));
       } else if (iterationDirectory && token === "task.json") {
-        const safeIteration = ensureWithin(
+        const safeIteration = ensureExistingWithin(
           join(root, "iterations"),
           iterationDirectory,
         );
@@ -74,7 +85,7 @@ export function buildContextPaths(
       if (!inferredIteration) {
         throw new Error(skill + " 需要 --iteration");
       }
-      const safeIteration = ensureWithin(
+      const safeIteration = ensureExistingWithin(
         join(root, "iterations"),
         inferredIteration,
       );
@@ -83,10 +94,58 @@ export function buildContextPaths(
       required.push(join(root, token));
     }
   }
+  if (taskDirectory) {
+    const safeTask = ensureExistingWithin(
+      join(root, "iterations"),
+      taskDirectory,
+    );
+    const taskPath = join(safeTask, "task.json");
+    if (existsSync(taskPath)) {
+      const task = readJson(taskPath);
+      for (const repository of task.repositories || []) {
+        required.push(
+          join(root, "project", "repositories", String(repository) + ".md"),
+        );
+      }
+      for (const entry of task.context || []) {
+        if (entry?.file) {
+          required.push(
+            ensureExistingWithin(root, resolve(root, String(entry.file))),
+          );
+        }
+      }
+    }
+    const policiesPath = join(root, "project", "policies.md");
+    if (existsSync(policiesPath)) {
+      required.push(policiesPath);
+    }
+  }
+  const uniqueRequired = [...new Set(required)];
+  const missing = uniqueRequired.filter((path) => !existsSync(path));
+  const totalBytes = uniqueRequired.reduce(
+    (total, path) => total + (existsSync(path) ? statSync(path).size : 0),
+    0,
+  );
+  const warnings = [];
+  if (missing.length) {
+    warnings.push(
+      "缺少必读文件: " +
+        missing.map((path) => relative(root, path)).join(", "),
+    );
+  }
+  if (totalBytes > DEFAULT_CONTEXT_BUDGET) {
+    warnings.push(
+      "必读上下文为 " + totalBytes + " bytes，超过默认预算 " +
+        DEFAULT_CONTEXT_BUDGET + " bytes；请缩小显式 context 引用。",
+    );
+  }
   return {
-    required: [...new Set(required)].map((path) =>
+    required: uniqueRequired.map((path) =>
       relative(root, path).replaceAll("\\", "/"),
     ),
+    missing: missing.map((path) => relative(root, path).replaceAll("\\", "/")),
+    total_bytes: totalBytes,
+    warnings,
     conditional: conditionalClause ? [conditionalClause] : [],
     forbidden_initial: forbiddenClause ? [forbiddenClause] : [],
     outputs: outputClause ? [outputClause] : [],

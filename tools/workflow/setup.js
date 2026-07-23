@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { basename, join, normalize, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import {
@@ -14,17 +14,119 @@ import {
   readText,
   replaceManagedBlock,
   runGit,
-  slugify,
   writeText,
 } from "./common.js";
 import { ensureAdapterIgnored, installAdapter } from "./adapter.js";
 
-function safeRemote(path) {
-  const remote = runGit(["config", "--get", "remote.origin.url"], path, true);
-  if (/https?:\/\/[^\s/:@]+:[^\s/@]+@/.test(remote)) {
+function canonicalPathKey(path) {
+  return normalize(path);
+}
+
+function canonicalRealpath(path) {
+  const resolver = realpathSync.native || realpathSync;
+  return resolver(resolve(path));
+}
+
+const WINDOWS_RESERVED_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+
+export function assertPortableRepositoryId(value) {
+  const id = String(value || "");
+  if (
+    !/^[a-z0-9](?:[a-z0-9._-]{0,62}[a-z0-9])?$/.test(id) ||
+    WINDOWS_RESERVED_NAMES.test(id)
+  ) {
+    throw new Error(
+      "仓库 ID 必须是 1-64 位小写 ASCII 字母、数字、点、下划线或连字符，" +
+        "首尾为字母或数字，且不能使用 Windows 保留名",
+    );
+  }
+  return id;
+}
+
+function suggestedRepositoryId(value) {
+  const id = String(value || "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, "")
+    .slice(0, 64)
+    .replace(/[^a-z0-9]+$/g, "");
+  return id && !WINDOWS_RESERVED_NAMES.test(id) ? id : "repo";
+}
+
+function remoteUserInfo(remote) {
+  const match = String(remote || "").trim().match(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i);
+  if (!match) {
     return "";
   }
-  return remote;
+  const authority = match[2].split(/[/?#]/, 1)[0];
+  const at = authority.lastIndexOf("@");
+  return at < 0 ? "" : authority.slice(0, at);
+}
+
+export function sanitizeGitRemote(remote) {
+  const value = String(remote || "").trim();
+  const match = value.match(/^([a-z][a-z0-9+.-]*:\/\/)(.*)$/i);
+  if (!match) {
+    return value;
+  }
+  const boundary = match[2].search(/[/?#]/);
+  const authority = boundary < 0 ? match[2] : match[2].slice(0, boundary);
+  const suffix = boundary < 0 ? "" : match[2].slice(boundary);
+  const at = authority.lastIndexOf("@");
+  return match[1] + (at < 0 ? authority : authority.slice(at + 1)) + suffix;
+}
+
+function comparableRemote(remote) {
+  return sanitizeGitRemote(remote).replace(/\/+$/, "");
+}
+
+function remoteMayContainCredential(remote) {
+  const userInfo = remoteUserInfo(remote);
+  if (!userInfo) {
+    return false;
+  }
+  const username = userInfo.split(":", 1)[0].toLowerCase();
+  return userInfo.includes(":") || !["git", "hg", "svn"].includes(username);
+}
+
+export function inspectRepositoryRoot(path) {
+  if (!path || !existsSync(path)) {
+    throw new Error("目标仓库路径不存在");
+  }
+  const requestedRoot = canonicalRealpath(path);
+  if (!isGitRepository(requestedRoot)) {
+    throw new Error("目标不是 Git 工作树");
+  }
+  const gitRoot = runGit(["rev-parse", "--show-toplevel"], requestedRoot);
+  const canonicalRoot = canonicalRealpath(gitRoot);
+  if (canonicalPathKey(requestedRoot) !== canonicalPathKey(canonicalRoot)) {
+    throw new Error("目标路径必须是 Git 仓库根目录");
+  }
+  return {
+    path: canonicalRoot,
+    path_key: canonicalPathKey(canonicalRoot),
+    remote: sanitizeGitRemote(
+      runGit(["config", "--get", "remote.origin.url"], canonicalRoot, true),
+    ),
+  };
+}
+
+export function assertRepositoryRegistration(repo) {
+  if (!repo?.id || !repo.path) {
+    throw new Error("仓库 ID 或路径无效");
+  }
+  assertPortableRepositoryId(repo.id);
+  const identity = inspectRepositoryRoot(repo.path);
+  if (Object.hasOwn(repo, "remote")) {
+    if (remoteMayContainCredential(repo.remote)) {
+      throw new Error("仓库 " + repo.id + " 的 remote 含疑似凭据");
+    }
+    if (comparableRemote(repo.remote) !== comparableRemote(identity.remote)) {
+      throw new Error("仓库 " + repo.id + " 的 origin remote 已漂移");
+    }
+  }
+  return identity;
 }
 
 function currentGitEmails() {
@@ -78,9 +180,10 @@ async function ask(rl, label, defaultValue = "") {
   return answer || defaultValue;
 }
 
-async function collectSetupConfig() {
+async function collectSetupConfig(options = {}) {
   const adapters = readJson(join(ROOT, "tools", "agent-adapters.json"));
   const existing = readLocalConfig() || {};
+  const detailed = options.detailed === true;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const projectName = await ask(
@@ -157,53 +260,83 @@ async function collectSetupConfig() {
       if (!rawPath) {
         throw new Error("至少登记一个代码仓库");
       }
-      const repoPath = resolve(rawPath.replace(/^["']|["']$/g, ""));
-      if (!existsSync(repoPath) || !isGitRepository(repoPath)) {
-        throw new Error("目标必须是现有 Git 仓库: " + repoPath);
+      const requestedPath = resolve(rawPath.replace(/^["']|["']$/g, ""));
+      let repositoryIdentity;
+      try {
+        repositoryIdentity = inspectRepositoryRoot(requestedPath);
+      } catch (error) {
+        throw new Error("目标必须是现有 Git 仓库根目录: " + error.message);
       }
+      const repoPath = repositoryIdentity.path;
       const defaults = detectedRepositoryDefaults(repoPath);
-      const id = slugify(
-        await ask(rl, "仓库稳定 ID", slugify(basename(repoPath), "repo")),
-        "repo",
+      const id = assertPortableRepositoryId(
+        await ask(
+          rl,
+          "仓库稳定 ID",
+          suggestedRepositoryId(basename(repoPath)),
+        ),
       );
       if (repositories.some((repo) => repo.id === id)) {
         throw new Error("仓库 ID 重复: " + id);
       }
-      const role = await ask(rl, "仓库角色");
-      const modules = optionList(await ask(rl, "主要模块，逗号分隔"));
-      const command = await ask(rl, "项目启动命令", defaults.startCommand);
-      const portText = await ask(rl, "启动端口，可留空");
-      const runtime = await ask(rl, "运行时版本范围，可留空", defaults.runtime);
-      const envVarNames = optionList(
-        await ask(rl, "所需环境变量名，逗号分隔", defaults.envVarNames.join(",")),
-      );
-      const configCenter = await ask(rl, "配置中心或外部服务依赖，可填 unknown", "unknown");
-      const integrationMode = await ask(
-        rl,
-        "联调方式，例如 direct 或 whistle",
-        "direct",
-      );
-      const availableEnvironments = optionList(
-        await ask(rl, "环境列表，逗号分隔", "local"),
-      );
-      const localOperable = optionList(
-        await ask(rl, "本地允许操作的环境，逗号分隔", "local"),
-      );
-      const remoteRead = optionList(
-        await ask(rl, "明确允许远程只读的环境，逗号分隔，默认无"),
-      );
-      const remoteWrite = optionList(
-        await ask(rl, "明确允许远程写入的非生产环境，逗号分隔，默认无"),
-      );
-      const switchMethod = await ask(
-        rl,
-        "环境切换或修改方式，可填 unknown",
-        "unknown",
-      );
+      for (const repo of repositories) {
+        if (assertRepositoryRegistration(repo).path_key === repositoryIdentity.path_key) {
+          throw new Error("代码仓库路径重复: " + id);
+        }
+      }
+      const role = await ask(rl, "仓库角色", "unknown");
+      let modules = [];
+      let command = defaults.startCommand;
+      let portText = "";
+      let runtime = defaults.runtime;
+      let envVarNames = defaults.envVarNames;
+      let configCenter = "unknown";
+      let integrationMode = "direct";
+      let availableEnvironments = ["local"];
+      let localOperable = ["local"];
+      let remoteRead = [];
+      let remoteWrite = [];
+      let switchMethod = "unknown";
+      if (detailed) {
+        modules = optionList(await ask(rl, "主要模块，逗号分隔"));
+        command = await ask(rl, "项目启动命令", defaults.startCommand);
+        portText = await ask(rl, "启动端口，可留空");
+        runtime = await ask(rl, "运行时版本范围，可留空", defaults.runtime);
+        envVarNames = optionList(
+          await ask(rl, "所需环境变量名，逗号分隔", defaults.envVarNames.join(",")),
+        );
+        configCenter = await ask(
+          rl,
+          "配置中心或外部服务依赖，可填 unknown",
+          "unknown",
+        );
+        integrationMode = await ask(
+          rl,
+          "联调方式，例如 direct 或 whistle",
+          "direct",
+        );
+        availableEnvironments = optionList(
+          await ask(rl, "环境列表，逗号分隔", "local"),
+        );
+        localOperable = optionList(
+          await ask(rl, "本地允许操作的环境，逗号分隔", "local"),
+        );
+        remoteRead = optionList(
+          await ask(rl, "明确允许远程只读的环境，逗号分隔，默认无"),
+        );
+        remoteWrite = optionList(
+          await ask(rl, "明确允许远程写入的非生产环境，逗号分隔，默认无"),
+        );
+        switchMethod = await ask(
+          rl,
+          "环境切换或修改方式，可填 unknown",
+          "unknown",
+        );
+      }
       repositories.push({
         id,
         path: repoPath,
-        remote: safeRemote(repoPath),
+        remote: repositoryIdentity.remote,
         role: role || "unknown",
         modules,
         start: {
@@ -254,14 +387,18 @@ export function validateSetupConfig(config, root = ROOT) {
     throw new Error("setup 配置至少需要一个代码仓库");
   }
   const ids = new Set();
+  const canonicalPaths = new Set();
   for (const repo of config.repositories) {
-    if (!repo.id || !repo.path || ids.has(repo.id)) {
+    const id = assertPortableRepositoryId(repo.id);
+    if (!repo.path || ids.has(id)) {
       throw new Error("仓库 ID 或路径无效，或 ID 重复");
     }
-    ids.add(repo.id);
-    if (!existsSync(repo.path) || !isGitRepository(repo.path)) {
-      throw new Error("目标不是 Git 仓库: " + repo.path);
+    ids.add(id);
+    const identity = assertRepositoryRegistration(repo);
+    if (canonicalPaths.has(identity.path_key)) {
+      throw new Error("多个仓库 ID 指向同一个 Git 仓库根目录");
     }
+    canonicalPaths.add(identity.path_key);
     if (repo.start?.port !== null && repo.start?.port !== undefined) {
       if (!Number.isInteger(repo.start.port) || repo.start.port < 1 || repo.start.port > 65535) {
         throw new Error("端口无效: " + repo.id);
@@ -345,7 +482,10 @@ function writeProjectDocs(config) {
     ),
   );
   for (const repo of config.repositories) {
-    const path = join(repositoriesDir, repo.id + ".md");
+    const path = ensureWithin(
+      repositoriesDir,
+      join(repositoriesDir, assertPortableRepositoryId(repo.id) + ".md"),
+    );
     const base = readText(
       path,
       "# " + repo.id + "\n\n在受管块之外补充该仓库已确认的长期说明。\n",
@@ -388,7 +528,7 @@ export async function runSetup(options) {
     config = readJson(resolve(process.cwd(), String(options.config)));
   } else {
     interactive = true;
-    config = await collectSetupConfig();
+    config = await collectSetupConfig(options);
   }
   config.workflow_version = readText(join(ROOT, "WORKFLOW_VERSION")).trim();
   validateSetupConfig(config);
@@ -397,6 +537,9 @@ export async function runSetup(options) {
     "\nAgent 适配预览:\n" +
       JSON.stringify(installAdapter(config.agent.id, config), null, 2),
   );
+  if (interactive && options.detailed !== true) {
+    console.log("\n已使用安全默认值；需要逐项配置运行信息时可重新执行 setup --detailed。");
+  }
   if (!options.apply && !interactive) {
     console.log("\n以上为预览；确认后添加 --apply。");
     return;

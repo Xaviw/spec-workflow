@@ -17,20 +17,21 @@ description: 初始化或更新 spec-driven-template 工作流仓库。首次使
 
 ## 流程
 
-1. 运行 `node tools/workflow.js setup`。
+1. 运行 `node tools/workflow.js setup` 完成必要配置。只有用户要逐项设置启动命令、端口、配置依赖、环境权限和联调方式时，才运行 `setup --detailed`。
 2. 已有 `AGENTS.local.md` 时复用项目、Agent、Git 邮箱和仓库配置作为默认值；让 CLI 自动探测其他可验证事实，对无法确定的选择逐项询问。
-3. 至少确认：
+3. 默认只确认：
    - 项目名称和目标；
    - 当前使用的 Agent；
    - 用户 Git 邮箱；
-   - 每个代码仓库的稳定 ID、路径、角色和模块；
+   - 每个代码仓库的稳定 ID、精确 Git 根目录和角色。
+4. 在 detailed 模式再确认：
    - 启动命令、启动端口、可选运行时版本；
    - 环境变量名、配置中心或外部服务依赖；
    - 联调方式，例如直接改代码或使用 Whistle；
    - 环境列表、本地可操作范围和切换方式。
-4. 未知信息可明确记录为 `unknown`，不为推进 setup 而猜测。任务触及该信息时再补齐。
-5. CLI 展示一次完整预览后，取得用户确认再写入。
-6. 运行 `node tools/workflow.js doctor`。只有 doctor 通过后才进入写操作工作流。
+5. 使用 1-64 位小写 ASCII 仓库 ID；只登记 `git rev-parse --show-toplevel` 对应根目录。拒绝重复 canonical path、子目录、保留设备名和带凭据的 remote。未知信息记录为 `unknown`，不要猜测。
+6. 让 CLI 展示一次完整预览，取得用户确认后再写入。
+7. 运行 `node tools/workflow.js doctor`。只有 doctor 通过后才进入写操作工作流。
 
 ## Agent 接入
 
