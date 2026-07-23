@@ -98,14 +98,19 @@ const REQUIRED_SECTIONS = {
 const PLACEHOLDER_PATTERN =
   /(?:\b(?:TODO|TBD|FIXME)\b|\[TODO[^\]]*\]|<\s*(?:任务标题|待[^>]*|TODO)[^>]*>|待补充|待确认|待核对|待完善)/i;
 const AC_PATTERN = /\bAC-\d{3}\b/gi;
-const SOURCE_SCHEMA_VERSION = Symbol("sourceSchemaVersion");
 
 function normalizedTask(raw) {
-  const revision = Number(raw.revision);
+  if (
+    raw.schema_version !== TASK_SCHEMA_VERSION ||
+    !Number.isInteger(raw.revision) ||
+    raw.revision < 0
+  ) {
+    throw new Error("task.json 格式不受支持");
+  }
   const task = {
     ...raw,
     schema_version: TASK_SCHEMA_VERSION,
-    revision: Number.isInteger(revision) && revision >= 0 ? revision : 0,
+    revision: raw.revision,
     repositories: Array.isArray(raw.repositories) ? [...raw.repositories] : [],
     modules: Array.isArray(raw.modules) ? [...raw.modules] : [],
     related_tasks: Array.isArray(raw.related_tasks) ? [...raw.related_tasks] : [],
@@ -136,10 +141,6 @@ function normalizedTask(raw) {
         : [],
     },
   };
-  Object.defineProperty(task, SOURCE_SCHEMA_VERSION, {
-    value: Number(raw.schema_version || 1),
-    enumerable: false,
-  });
   return task;
 }
 
@@ -288,11 +289,32 @@ function phaseDocumentValidation(directory, phase, acceptanceIds = []) {
         "）",
     );
   }
-  result.acceptance_ids = [
-    ...new Set((content.match(AC_PATTERN) || []).map((id) => id.toUpperCase())),
-  ].sort();
-  if (phase === "prd" && result.acceptance_ids.length === 0) {
-    result.errors.push("prd.md 至少需要一个 AC-001 格式的验收 ID");
+  if (phase === "prd") {
+    const acceptanceSection = parsed.sections.find(
+      (section) => section.title === "验收标准",
+    );
+    const acceptanceIds = (acceptanceSection?.lines || [])
+      .map((line) => line.match(/^###\s+(AC-\d{3})\b/i)?.[1]?.toUpperCase())
+      .filter(Boolean);
+    const uniqueIds = new Set();
+    const duplicates = new Set();
+    for (const id of acceptanceIds) {
+      if (uniqueIds.has(id)) {
+        duplicates.add(id);
+      }
+      uniqueIds.add(id);
+    }
+    result.acceptance_ids = [...uniqueIds].sort();
+    if (result.acceptance_ids.length === 0) {
+      result.errors.push("prd.md 的验收标准章节至少需要一个 AC-001 格式的三级标题");
+    }
+    if (duplicates.size) {
+      result.errors.push("prd.md 包含重复验收 ID：" + [...duplicates].join(", "));
+    }
+  } else {
+    result.acceptance_ids = [
+      ...new Set((content.match(AC_PATTERN) || []).map((id) => id.toUpperCase())),
+    ].sort();
   }
   if (phase === "technical_design" || phase === "implementation_spec") {
     const missing = acceptanceIds.filter(
@@ -684,15 +706,6 @@ function finalizeDelivery(task, commitOption) {
         "--commit 必须完整、按顺序列出 baseline..HEAD 的全部 commit：" + id,
       );
     }
-    if (recorded.migrated_from_schema === 1 && recorded.final_head) {
-      if (
-        recorded.final_head !== finalHead ||
-        fingerprint(recorded.commits) !== fingerprint(expectedCommits)
-      ) {
-        throw new Error("迁移交付记录与本次 --commit 不一致：" + id);
-      }
-      continue;
-    }
     const dirtyState = repositoryDirtyState(root);
     if (
       Array.isArray(recorded.initial_dirty_state) &&
@@ -714,86 +727,6 @@ function finalizeDelivery(task, commitOption) {
     recorded.remaining_dirty_paths = dirtyState.map((entry) => entry.path);
     recorded.finalized_at = new Date().toISOString();
   }
-}
-
-function attachMigratedDelivery(task, options) {
-  const baselines = parseCommitOptions(options.baseline);
-  const supplied = parseCommitOptions(options.commit);
-  const expected = new Set(task.repositories.map(String));
-  for (const map of [baselines, supplied]) {
-    for (const id of map.keys()) {
-      if (!expected.has(id)) {
-        throw new Error("迁移参数包含任务范围外仓库：" + id);
-      }
-    }
-  }
-  const selection = repositorySelectionValidation(task);
-  if (selection.errors.length) {
-    throw new Error(selection.errors.join("；"));
-  }
-  const capturedAt = new Date().toISOString();
-  task.delivery.repositories = task.repositories.map((idValue) => {
-    const id = String(idValue);
-    const suppliedCommits = supplied.get(id) || [];
-    if (
-      baselines.get(id)?.length !== 1 ||
-      (task.phase === "done" && !suppliedCommits.length)
-    ) {
-      throw new Error(
-        "迁移需要每仓一个 --baseline repo=sha；旧 done 还需要完整的 --commit 序列：" + id,
-      );
-    }
-    const repository = canonicalRepository(selection.configured.get(id));
-    const baseline = commitExists(repository.canonical_root, baselines.get(id)[0]);
-    if (!baseline) {
-      throw new Error("迁移 baseline 不存在：" + id);
-    }
-    const commits = suppliedCommits.map((value) => {
-      const commit = commitExists(repository.canonical_root, value);
-      if (!commit) {
-        throw new Error("迁移 commit 不存在：" + id + "=" + value);
-      }
-      return commit;
-    });
-    const finalHead = commits.at(-1) || null;
-    let expectedCommits = [];
-    let verificationTree = null;
-    if (finalHead) {
-      if (
-        finalHead === baseline ||
-        !isAncestor(repository.canonical_root, baseline, finalHead)
-      ) {
-        throw new Error("迁移 final commit 不是 baseline 的严格后代：" + id);
-      }
-      expectedCommits = commitsBetween(
-        repository.canonical_root,
-        baseline,
-        finalHead,
-      );
-      if (fingerprint(commits) !== fingerprint(expectedCommits)) {
-        throw new Error("迁移 commit 必须完整覆盖 baseline..final：" + id);
-      }
-      verificationTree = runGit(
-        ["rev-parse", finalHead + "^{tree}"],
-        repository.canonical_root,
-      );
-    }
-    return {
-      id,
-      canonical_root: repository.canonical_root,
-      branch: repositoryBranch(repository.canonical_root),
-      baseline_head: baseline,
-      initial_dirty_paths: [],
-      initial_dirty_state: null,
-      captured_at: capturedAt,
-      verification_tree: verificationTree,
-      commits: expectedCommits,
-      final_head: finalHead,
-      remaining_dirty_paths: [],
-      finalized_at: finalHead ? capturedAt : null,
-      migrated_from_schema: 1,
-    };
-  });
 }
 
 function sliceValidation(slices) {
@@ -863,7 +796,7 @@ function sliceValidation(slices) {
 }
 
 function phaseDependencies(task, directory, phase) {
-  const hashes = {};
+  const hashes = { decisions: fileHash(join(directory, "decisions.md")) };
   const phaseIndex = PHASES.indexOf(phase);
   for (const dependency of ["prd", "technical_design", "implementation_spec"]) {
     if (PHASES.indexOf(dependency) < phaseIndex) {
@@ -964,42 +897,6 @@ function recordCheckpoint(task, directory, phase) {
     checkpoint_hash: checkpointIdentity(phase, checkpoint),
     revision: task.revision + 1,
   };
-}
-
-function bootstrapLegacyCheckpoints(task, directory) {
-  if (task[SOURCE_SCHEMA_VERSION] >= TASK_SCHEMA_VERSION) {
-    return;
-  }
-  const currentIndex = PHASES.indexOf(task.phase);
-  if (currentIndex < 0) {
-    throw new Error("旧任务 phase 无效，无法迁移：" + task.phase);
-  }
-  if (
-    currentIndex >= PHASES.indexOf("implementation") &&
-    task.delivery.repositories.length === 0
-  ) {
-    if (
-      task.repositories.length &&
-      currentIndex >= PHASES.indexOf("implementation")
-    ) {
-      throw new Error(
-        "旧任务已进入 implementation，不能从当前 HEAD 猜测基线；请先运行 task migrate",
-      );
-    }
-    captureRepositories(task);
-  }
-  for (const phase of [
-    "prd",
-    "technical_design",
-    "implementation_spec",
-    "implementation",
-  ]) {
-    if (PHASES.indexOf(phase) >= currentIndex || task.checkpoints[phase]) {
-      continue;
-    }
-    assertTaskGate(task, directory, phase);
-    recordCheckpoint(task, directory, phase);
-  }
 }
 
 function invalidateFrom(task, phase) {
@@ -1174,7 +1071,6 @@ export function taskStatus(reference) {
     commits: repository.commits,
     final_head: repository.final_head,
     verification_tree: repository.verification_tree,
-    migrated_from_schema: repository.migrated_from_schema || null,
   }));
   return {
     path: relative(ROOT, inspected.directory).replaceAll("\\", "/"),
@@ -1299,7 +1195,6 @@ export function transitionTask(reference, phase, options = {}) {
     const forward = PHASES.indexOf(phase) > PHASES.indexOf(task.phase);
     if (forward) {
       assertConfirmed(options);
-      bootstrapLegacyCheckpoints(task, directory);
       if (task.phase === "verification") {
         finalizeDelivery(task, options.commit);
         assertTaskGate(task, directory, "implementation");
@@ -1375,48 +1270,6 @@ export function reopenTask(reference, phase, options = {}) {
     delete task.cancelled_from;
   });
   console.log(result.task.phase);
-}
-
-export function migrateTask(reference, options = {}) {
-  if (options.confirmed !== true || !options.reason || options.reason === true) {
-    throw new Error("迁移旧任务需要 --reason 和 --confirmed");
-  }
-  const result = mutateTask(reference, options, (task, directory) => {
-    if (task[SOURCE_SCHEMA_VERSION] >= TASK_SCHEMA_VERSION) {
-      throw new Error("task migrate 仅用于 schema v1 任务");
-    }
-    if (!new Set(["implementation", "verification", "done"]).has(task.phase)) {
-      throw new Error(
-        "prd 到 implementation_spec 的旧任务会在正常向前推进时自动迁移",
-      );
-    }
-    task.checkpoints = {};
-    task.approvals = {};
-    attachMigratedDelivery(task, options);
-    const currentIndex = PHASES.indexOf(task.phase);
-    for (const phase of [
-      "prd",
-      "technical_design",
-      "implementation_spec",
-      "implementation",
-      "verification",
-    ]) {
-      if (PHASES.indexOf(phase) >= currentIndex) {
-        continue;
-      }
-      assertTaskGate(task, directory, phase);
-      recordCheckpoint(task, directory, phase);
-    }
-    task.migration_receipt = {
-      from_schema: task[SOURCE_SCHEMA_VERSION],
-      reason: String(options.reason),
-      confirmed_at: new Date().toISOString(),
-      revision: task.revision + 1,
-      delivery_hash: fingerprint(task.delivery),
-    };
-  });
-  console.log(JSON.stringify(result.task.migration_receipt, null, 2));
-  return result.task.migration_receipt;
 }
 
 export function setTaskSlices(reference, slices, options = {}) {

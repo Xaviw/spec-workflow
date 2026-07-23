@@ -25,6 +25,7 @@ import {
   ensureWithin,
   extractManagedJson,
   fileHash,
+  fingerprint,
   parseCliArgs,
   replaceManagedBlock,
   withFileLocks,
@@ -36,6 +37,7 @@ import { aggregateRelease } from "../workflow/release.js";
 import {
   assertRepositoryRegistration,
   assertPortableRepositoryId,
+  collectDetailedRepositoryConfig,
   inspectRepositoryRoot,
   sanitizeGitRemote,
   validateSetupConfig,
@@ -121,6 +123,23 @@ test("上下文 dry-run 不带入其他任务或全部项目知识", (t) => {
     context.required.filter((path) => path.startsWith("project/knowledge/")),
     ["project/knowledge/api.md"],
   );
+  const outside = temporaryDirectory(t);
+  const linkedPrd = join(task, "prd.md");
+  symlinkSync(
+    outside,
+    linkedPrd,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  assert.throws(
+    () => buildContextPaths("spec-driven-prd", task, root),
+    /路径超出/,
+  );
+  rmSync(linkedPrd, { recursive: true, force: true });
+  writeJson(join(task, "task.json"), { repositories: ["../outside"] });
+  assert.throws(
+    () => buildContextPaths("spec-driven-prd", task, root),
+    /路径超出/,
+  );
 });
 
 test("CLI 参数严格区分布尔和值选项", () => {
@@ -189,7 +208,7 @@ test("主入口判断解析符号链接与 macOS 临时目录别名", (t) => {
   assert.equal(isMainModule(pathToFileURL(throughAlias).href, canonical), true);
 });
 
-test("setup 使用 canonical Git 根并拒绝子目录、重复路径和 remote 凭据", (t) => {
+test("setup 使用 canonical Git 根并拒绝子目录、重复路径和 remote 凭据", async (t) => {
   const root = temporaryDirectory(t);
   const repository = join(root, "repository");
   const alias = join(root, "repository-alias");
@@ -253,6 +272,41 @@ test("setup 使用 canonical Git 根并拒绝子目录、重复路径和 remote 
       }),
     /同一个 Git 仓库根目录/,
   );
+  const answers = [
+    "",
+    "",
+    "3100",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ];
+  const detailed = await collectDetailedRepositoryConfig(
+    { question: async () => answers.shift() },
+    {
+      ...repositoryConfig("api", repository),
+      start: { command: "npm start", port: 3000, runtime: ">=22" },
+    },
+    { startCommand: "npm start", runtime: ">=22", envVarNames: [] },
+  );
+  assert.equal(detailed.start.port, 3100);
+  assert.equal(detailed.id, "api");
+  const clearAnswers = [
+    "-", "", "-", "-", "-", "", "", "", "", "", "", "",
+  ];
+  const cleared = await collectDetailedRepositoryConfig(
+    { question: async () => clearAnswers.shift() },
+    { ...detailed, modules: ["server"] },
+    { startCommand: "npm start", runtime: ">=22", envVarNames: [] },
+  );
+  assert.deepEqual(cleared.modules, []);
+  assert.equal(cleared.start.port, null);
+  assert.equal(cleared.start.runtime, null);
 });
 
 test("既有读取路径不能通过最终符号链接逃逸", (t) => {
@@ -283,6 +337,9 @@ test("任务移动和删除的路径守卫拒绝逃逸", (t) => {
 test("发布聚合只纳入 done，并在来源变化时改变指纹", (t) => {
   const iteration = temporaryDirectory(t);
   writeJson(join(iteration, "iteration.json"), {
+    schema_version: 2,
+    id: iteration.split(/[\\/]/).at(-1),
+    revision: 0,
     title: "发布",
     goal: "上线",
     status: "open",
@@ -296,6 +353,8 @@ test("发布聚合只纳入 done，并在来源变化时改变指纹", (t) => {
     const directory = join(iteration, id);
     mkdirSync(directory);
     writeJson(join(directory, "task.json"), {
+      schema_version: 2,
+      revision: 0,
       title: id,
       phase,
       repositories: ["backend"],
@@ -309,6 +368,8 @@ test("发布聚合只纳入 done，并在来源变化时改变指纹", (t) => {
   writeFileSync(
     join(iteration, "changes.jsonl"),
     JSON.stringify({
+      schema_version: 2,
+      id: "change-1",
       summary: "小修复",
       commits: { backend: "abc" },
       verification: "test",
@@ -391,7 +452,7 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
   cpSync(join(sourceRoot, ".agents"), join(workflow, ".agents"), {
     recursive: true,
   });
-  for (const path of [".gitattributes", "AGENTS.md", "WORKFLOW_VERSION"]) {
+  for (const path of [".gitattributes", "AGENTS.md"]) {
     cpSync(join(sourceRoot, path), join(workflow, path));
   }
   for (const path of ["workflow.js", "agent-adapters.json", "package.json"]) {
@@ -530,21 +591,41 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
   assert.throws(() =>
     run("task", "phase", taskPath, "technical_design", "--confirmed"),
   );
+  const prdDocument = markdownDocument("新增接口", [
+    ["背景与原始需求", "需要增加一个可验证接口。"],
+    ["目标", "调用方可以读取接口结果。"],
+    ["非目标", "不调整认证体系。"],
+    ["用户与场景", "内部调用方在联调时访问接口。"],
+    ["范围和业务规则", "返回稳定的成功结果。"],
+    ["异常与边界", "无效输入返回明确错误。"],
+    ["验收标准", "### AC-001 接口可用\n\n调用后返回预期结果。"],
+    ["约束与依赖", "涉及 backend 和 frontend 两个仓库。"],
+    ["未决问题", "无。"],
+  ]);
+  const prdPath = join(workflow, taskPath, "prd.md");
   writeFileSync(
-    join(workflow, taskPath, "prd.md"),
-    markdownDocument("新增接口", [
-      ["背景与原始需求", "需要增加一个可验证接口。"],
-      ["目标", "调用方可以读取接口结果。"],
-      ["非目标", "不调整认证体系。"],
-      ["用户与场景", "内部调用方在联调时访问接口。"],
-      ["范围和业务规则", "返回稳定的成功结果。"],
-      ["异常与边界", "无效输入返回明确错误。"],
-      ["验收标准", "### AC-001 接口可用\n\n调用后返回预期结果。"],
-      ["约束与依赖", "涉及 backend 和 frontend 两个仓库。"],
-      ["未决问题", "无。"],
-    ]),
+    prdPath,
+    prdDocument.replace(
+      "### AC-001 接口可用\n\n调用后返回预期结果。",
+      "验收项引用 AC-001，但没有使用三级标题。",
+    ),
     "utf8",
   );
+  assert.throws(() =>
+    run("task", "phase", taskPath, "technical_design", "--confirmed"),
+  );
+  writeFileSync(
+    prdPath,
+    prdDocument.replace(
+      "调用后返回预期结果。",
+      "调用后返回预期结果。\n\n### AC-001 重复验收\n\n不得重复。",
+    ),
+    "utf8",
+  );
+  assert.throws(() =>
+    run("task", "phase", taskPath, "technical_design", "--confirmed"),
+  );
+  writeFileSync(prdPath, prdDocument, "utf8");
   const cancelledTaskPath = run(
     "task",
     "create",
@@ -555,6 +636,16 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     "--summary",
     "不应成为可用候选",
   );
+  const cancelledPrdPath = join(workflow, cancelledTaskPath, "prd.md");
+  writeFileSync(cancelledPrdPath, prdDocument, "utf8");
+  run(
+    "task",
+    "phase",
+    cancelledTaskPath,
+    "technical_design",
+    "--confirmed",
+  );
+  writeFileSync(cancelledPrdPath, prdDocument + "\n取消前需求变化。\n", "utf8");
   run(
     "task",
     "cancel",
@@ -563,6 +654,17 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     "测试过滤",
     "--confirmed",
   );
+  assert.doesNotThrow(() => run("doctor"));
+  const cancelledDecisionsPath = join(
+    workflow,
+    cancelledTaskPath,
+    "decisions.md",
+  );
+  const cancelledDecisions = readFileSync(cancelledDecisionsPath, "utf8");
+  rmSync(cancelledDecisionsPath);
+  assert.throws(() => run("doctor"));
+  writeFileSync(cancelledDecisionsPath, cancelledDecisions, "utf8");
+  assert.doesNotThrow(() => run("doctor"));
   execFileSync("git", ["add", "iterations"], { cwd: workflow });
   execFileSync("git", ["commit", "-q", "-m", "test: add tasks"], {
     cwd: workflow,
@@ -613,6 +715,23 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     String(prdStatus.revision),
     "--confirmed",
   );
+  const taskJsonPath = join(workflow, taskPath, "task.json");
+  const confirmedTask = JSON.parse(readFileSync(taskJsonPath, "utf8"));
+  const missingDecisionsDependency = structuredClone(confirmedTask);
+  const prdCheckpoint = missingDecisionsDependency.checkpoints.prd;
+  delete prdCheckpoint.dependency_hashes.decisions;
+  missingDecisionsDependency.approvals.prd.checkpoint_hash = fingerprint({
+    phase: "prd",
+    artifact: prdCheckpoint.artifact,
+    content_hash: prdCheckpoint.content_hash,
+    dependency_hashes: prdCheckpoint.dependency_hashes,
+  });
+  writeJson(taskJsonPath, missingDecisionsDependency);
+  assert.throws(
+    () => run("doctor"),
+    (error) => /缺少 decisions 依赖/.test(String(error.stdout)),
+  );
+  writeJson(taskJsonPath, confirmedTask);
   const confirmedPrd = readFileSync(join(workflow, taskPath, "prd.md"), "utf8");
   writeFileSync(
     join(workflow, taskPath, "prd.md"),
@@ -625,6 +744,15 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     ),
   );
   writeFileSync(join(workflow, taskPath, "prd.md"), confirmedPrd, "utf8");
+  const decisionsPath = join(workflow, taskPath, "decisions.md");
+  const confirmedDecisions = readFileSync(decisionsPath, "utf8");
+  writeFileSync(decisionsPath, confirmedDecisions + "\n新增决策。\n", "utf8");
+  assert.ok(
+    JSON.parse(run("task", "status", taskPath, "--json")).blockers.some(
+      (blocker) => /checkpoint prd 为 stale/.test(blocker),
+    ),
+  );
+  writeFileSync(decisionsPath, confirmedDecisions, "utf8");
   writeFileSync(
     join(workflow, taskPath, "technical-design.md"),
     markdownDocument("技术方案", [
@@ -776,139 +904,6 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
       "--confirmed",
     ),
   );
-  const legacyIterationPath = run(
-    "iteration",
-    "create",
-    "--title",
-    "旧任务迁移",
-    "--goal",
-    "验证显式迁移回执",
-  );
-  const legacyIterationId = legacyIterationPath.split(/[\\/]/).at(-1);
-  const legacyTaskPath = join("iterations", legacyIterationId, "legacy-done");
-  const legacyTaskDirectory = join(workflow, legacyTaskPath);
-  mkdirSync(legacyTaskDirectory);
-  for (const name of [
-    "prd.md",
-    "decisions.md",
-    "technical-design.md",
-    "spec.md",
-    "verification.md",
-  ]) {
-    cpSync(join(workflow, taskPath, name), join(legacyTaskDirectory, name));
-  }
-  const completedTask = JSON.parse(
-    readFileSync(join(workflow, taskPath, "task.json"), "utf8"),
-  );
-  writeJson(join(legacyTaskDirectory, "task.json"), {
-    title: "旧版已完成任务",
-    summary: "迁移已有交付证据",
-    type: "feature",
-    phase: "done",
-    repositories: ["backend", "frontend"],
-    modules: [],
-    related_tasks: [],
-    slices: completedTask.slices,
-  });
-  const backendBaseline = execFileSync(
-    "git",
-    ["rev-list", "--max-parents=0", "HEAD"],
-    { cwd: target, encoding: "utf8" },
-  ).trim();
-  const frontendBaseline = execFileSync(
-    "git",
-    ["rev-list", "--max-parents=0", "HEAD"],
-    { cwd: frontend, encoding: "utf8" },
-  ).trim();
-  run(
-    "task",
-    "migrate",
-    legacyTaskPath,
-    "--baseline",
-    "backend=" + backendBaseline,
-    "--baseline",
-    "frontend=" + frontendBaseline,
-    "--commit",
-    "backend=" + backendFirstCommit,
-    "--commit",
-    "backend=" + deliveryCommit,
-    "--commit",
-    "frontend=" + frontendCommit,
-    "--reason",
-    "从 0.4 工作流升级",
-    "--confirmed",
-  );
-  assert.equal(
-    JSON.parse(run("task", "status", legacyTaskPath, "--json")).ready,
-    true,
-  );
-  const legacyImplementationTaskPath = join(
-    "iterations",
-    legacyIterationId,
-    "legacy-implementation",
-  );
-  const legacyImplementationDirectory = join(
-    workflow,
-    legacyImplementationTaskPath,
-  );
-  mkdirSync(legacyImplementationDirectory);
-  for (const name of [
-    "prd.md",
-    "decisions.md",
-    "technical-design.md",
-    "spec.md",
-  ]) {
-    cpSync(
-      join(workflow, taskPath, name),
-      join(legacyImplementationDirectory, name),
-    );
-  }
-  writeJson(join(legacyImplementationDirectory, "task.json"), {
-    title: "旧版实施中任务",
-    summary: "只迁移人工确认的实施基线",
-    type: "feature",
-    phase: "implementation",
-    repositories: ["backend"],
-    modules: [],
-    related_tasks: [],
-    slices: [],
-  });
-  run(
-    "task",
-    "migrate",
-    legacyImplementationTaskPath,
-    "--baseline",
-    "backend=" + backendBaseline,
-    "--reason",
-    "从 0.4 工作流升级实施中任务",
-    "--confirmed",
-  );
-  assert.equal(
-    JSON.parse(
-      run("task", "status", legacyImplementationTaskPath, "--json"),
-    ).ready,
-    true,
-  );
-  const legacyImplementationJsonPath = join(
-    legacyImplementationDirectory,
-    "task.json",
-  );
-  const legacyImplementationJson = JSON.parse(
-    readFileSync(legacyImplementationJsonPath, "utf8"),
-  );
-  const missingReceipt = { ...legacyImplementationJson };
-  delete missingReceipt.migration_receipt;
-  writeJson(legacyImplementationJsonPath, missingReceipt);
-  assert.throws(() => run("doctor"));
-  writeJson(legacyImplementationJsonPath, legacyImplementationJson);
-  run(
-    "task",
-    "cancel",
-    legacyImplementationTaskPath,
-    "--reason",
-    "迁移路径验证完成",
-    "--confirmed",
-  );
   writeFileSync(join(target, "follow-up.txt"), "small change\n", "utf8");
   execFileSync("git", ["add", "follow-up.txt"], { cwd: target });
   execFileSync("git", ["commit", "-q", "-m", "fix: follow-up"], {
@@ -919,10 +914,6 @@ test("CLI 可在临时 Git 仓库完成 setup 到迭代收口", (t) => {
     encoding: "utf8",
   }).trim();
   assert.equal(JSON.parse(run("task", "status", taskPath, "--json")).ready, true);
-  assert.equal(
-    JSON.parse(run("task", "status", legacyTaskPath, "--json")).ready,
-    true,
-  );
   run(
     "change",
     "add",

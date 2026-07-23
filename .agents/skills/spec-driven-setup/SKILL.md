@@ -7,7 +7,7 @@ description: 初始化或更新 spec-driven-template 工作流仓库。首次使
 
 ## 上下文契约
 
-必读：`AGENTS.md`、`tools/agent-adapters.json`、`WORKFLOW_VERSION`，以及已有的 `AGENTS.local.md`。
+必读：`AGENTS.md`、`tools/agent-adapters.json`、`tools/package.json`，以及已有的 `AGENTS.local.md`。
 
 按需读取：候选代码仓库的 Git 元数据、README、运行时配置文件和已有项目文档。只读取当前正在确认的仓库。
 

@@ -34,7 +34,6 @@ import {
   cancelTask,
   createTask,
   deleteTask,
-  migrateTask,
   moveTask,
   reopenTask,
   setTaskSlices,
@@ -67,7 +66,6 @@ function help() {
       "task slices <task> --config <json-file> [--expected-revision <n>]",
       "task slice <task> <slice-id> <status> [--expected-revision <n>]",
       "task reopen <task> <phase> --reason <reason> --confirmed",
-      "task migrate <task> --baseline <repo=sha> [--commit <repo=sha>] --reason <reason> --confirmed",
       "task move <task> --iteration <id> [--apply]",
       "task delete <task> [--apply]",
       "task cancel <task> --reason <reason> --confirmed",
@@ -241,11 +239,6 @@ async function main(argv) {
   if (group === "task" && action === "reopen") {
     assertArity(positionals, 4, "task reopen <task> <phase> --reason <reason> --confirmed");
     reopenTask(third, positionals[3], options);
-    return;
-  }
-  if (group === "task" && action === "migrate") {
-    assertArity(positionals, 3, "task migrate <task> --baseline <repo=sha> [--commit <repo=sha>] --reason <reason> --confirmed");
-    migrateTask(third, options);
     return;
   }
   if (group === "task" && action === "move") {

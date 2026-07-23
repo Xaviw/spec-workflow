@@ -7,7 +7,7 @@ description: 只读诊断工作流安装、Agent 入口、Skills 映射、本地
 
 ## 上下文契约
 
-必读：`AGENTS.md`、`WORKFLOW_VERSION`、`tools/agent-adapters.json`、`AGENTS.local.md`（若存在）。
+必读：`AGENTS.md`、`tools/package.json`、`tools/agent-adapters.json`、`AGENTS.local.md`（若存在）。
 
 按需读取：`project/index.md`、已登记仓库文档及其 Git 元数据、当前 Agent 的适配文件。
 

@@ -59,19 +59,6 @@ node tools/workflow.js doctor
 
 删除、移动和适配器替换默认只预览，确认目标后添加 `--apply`。`done` 和 `cancelled` 是终态；开放迭代中需要修订时使用 `task reopen <task> <phase> --reason "..." --confirmed`，已结束迭代则新建关联任务。
 
-从 0.4 升级时，implementation_spec 及以前的任务会在下一次正常推进时写回 schema v2。已经进入 implementation、verification 或 done 的 schema v1 任务不能从当前工作树猜测历史基线，需显式提供证据：
-
-```text
-node tools/workflow.js task migrate <task> \
-  --baseline backend=<start-sha> \
-  --commit backend=<first-sha> \
-  --commit backend=<final-sha> \
-  --reason "从 0.4 升级" \
-  --confirmed
-```
-
-迁移只允许 schema v1，并写入 migration receipt。implementation/verification 尚未提交时只需提供每仓 baseline，最终 commit 仍由正常 done 校验；旧 done 必须提供 `baseline..final` 的完整 commit 序列。
-
 ## 多仓交付
 
 进入 implementation 时，CLI 自动捕获每个登记仓库的真实根目录、branch、HEAD 和初始脏文件。实现与可执行验证完成后：
@@ -129,6 +116,6 @@ cd tools
 npm test
 ```
 
-CI 在 Ubuntu、macOS 和 Windows 上覆盖 Node 22.12 与 Node 24。文本产物统一以 LF 提交，checkpoint hash 会规范化本地 CRLF/LF 差异。
+文本产物统一以 LF 提交，checkpoint hash 会规范化本地 CRLF/LF 差异。
 
-升级模板时只合并上游 `AGENTS.md`、`.agents/skills/`、`tools/`、`.gitattributes` 和 `WORKFLOW_VERSION`，保留 `project/`、`iterations/` 与 `AGENTS.local.md`，再运行测试和 doctor。项目特殊规则写入可选的 `project/policies.md`。
+升级模板时只合并上游 `AGENTS.md`、`.agents/skills/`、`tools/` 和 `.gitattributes`，保留 `project/`、`iterations/` 与 `AGENTS.local.md`，再运行测试和 doctor。项目特殊规则写入可选的 `project/policies.md`。

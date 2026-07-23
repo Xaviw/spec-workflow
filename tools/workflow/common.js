@@ -77,7 +77,6 @@ const VALUE_CLI_OPTIONS = new Set([
   "related",
   "reason",
   "commit",
-  "baseline",
   "verification",
   "project-docs",
   "task",

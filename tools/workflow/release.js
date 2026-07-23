@@ -37,9 +37,15 @@ function now() {
 }
 
 function nextIterationRevision(iteration, directory) {
-  iteration.schema_version = Math.max(Number(iteration.schema_version) || 1, 2);
-  iteration.id ||= basename(directory);
-  iteration.revision = (Number.isInteger(iteration.revision) ? iteration.revision : 0) + 1;
+  if (
+    iteration.schema_version !== 2 ||
+    iteration.id !== basename(directory) ||
+    !Number.isInteger(iteration.revision) ||
+    iteration.revision < 0
+  ) {
+    throw new Error("iteration.json 格式不受支持");
+  }
+  iteration.revision += 1;
   iteration.updated_at = now();
   return iteration.revision;
 }
@@ -50,23 +56,13 @@ function assertOpenIteration(iteration, action) {
   }
 }
 
-function commitValue(value) {
-  if (typeof value === "string") {
-    return value.trim();
-  }
-  if (value && typeof value === "object") {
-    return String(value.sha || value.commit || value.id || "").trim();
-  }
-  return "";
-}
-
 function normalizedDelivery(task) {
   const repositories = Array.isArray(task.delivery?.repositories)
     ? task.delivery.repositories
     : [];
   return {
     repositories: repositories.map((repo) => ({
-      id: String(repo?.id || repo?.repo_id || ""),
+      id: String(repo?.id || ""),
       canonical_root: repo?.canonical_root || null,
       branch: repo?.branch || null,
       baseline_head: repo?.baseline_head || null,
@@ -80,7 +76,7 @@ function normalizedDelivery(task) {
       verification_tree: repo?.verification_tree || null,
       checks: Array.isArray(repo?.checks) ? repo.checks : [],
       commits: Array.isArray(repo?.commits)
-        ? repo.commits.map(commitValue).filter(Boolean)
+        ? repo.commits.map(String).filter(Boolean)
         : [],
       final_head: repo?.final_head || null,
       remaining_dirty_paths: Array.isArray(repo?.remaining_dirty_paths)
@@ -114,10 +110,17 @@ function taskSnapshot(iterationDirectory, entry) {
   const directory = join(iterationDirectory, entry.name);
   const path = join(directory, "task.json");
   const task = readJson(path);
+  if (
+    task.schema_version !== 2 ||
+    !Number.isInteger(task.revision) ||
+    task.revision < 0
+  ) {
+    throw new Error("任务 " + entry.name + " 的 task.json 格式不受支持");
+  }
   return {
     id: entry.name,
-    schema_version: Number.isInteger(task.schema_version) ? task.schema_version : 1,
-    revision: Number.isInteger(task.revision) ? task.revision : 0,
+    schema_version: task.schema_version,
+    revision: task.revision,
     task_hash: fileHash(path),
     title: task.title,
     summary: task.summary || "",
@@ -133,7 +136,6 @@ function taskSnapshot(iterationDirectory, entry) {
     approvals: task.approvals || {},
     slices: Array.isArray(task.slices) ? task.slices : [],
     delivery: normalizedDelivery(task),
-    migration_receipt: task.migration_receipt || null,
     closure_receipt: task.closure_receipt || null,
   };
 }
@@ -147,11 +149,24 @@ function readChanges(iteration) {
     .split(/\r?\n/)
     .filter((line) => line.trim())
     .map((line, index) => {
+      let change;
       try {
-        return JSON.parse(line);
+        change = JSON.parse(line);
       } catch {
         throw new Error("changes.jsonl 第 " + (index + 1) + " 行不是有效 JSON");
       }
+      if (
+        !change ||
+        typeof change !== "object" ||
+        Array.isArray(change) ||
+        change.schema_version !== 2 ||
+        !change.id
+      ) {
+        throw new Error(
+          "changes.jsonl 第 " + (index + 1) + " 行格式不受支持",
+        );
+      }
+      return change;
     });
 }
 
@@ -247,13 +262,13 @@ export function collectReleaseCommitReferences(aggregate) {
   }
   for (const change of aggregate.changes) {
     for (const [repoId, rawCommit] of Object.entries(change.commits || {})) {
-      const sha = commitValue(rawCommit);
+      const sha = String(rawCommit).trim();
       if (sha) {
         references.push({
           repo_id: repoId,
           sha,
           source_type: "change",
-          source_id: change.id || change.summary || "legacy-change",
+          source_id: change.id,
           canonical_root: null,
         });
       }
@@ -273,7 +288,7 @@ function resolveRepositoryCommit(config, repoId, rawCommit) {
     throw new Error("未登记的仓库 ID: " + repoId);
   }
   const identity = assertRepositoryRegistration(repo);
-  const commit = commitValue(rawCommit);
+  const commit = String(rawCommit || "").trim();
   if (!/^[0-9a-f]{7,64}$/i.test(commit)) {
     throw new Error("仓库 " + repoId + " 的 commit 必须是十六进制 SHA");
   }

@@ -174,10 +174,124 @@ function detectedRepositoryDefaults(path) {
   };
 }
 
-async function ask(rl, label, defaultValue = "") {
+async function ask(rl, label, defaultValue = "", allowClear = false) {
   const suffix = defaultValue ? " [" + defaultValue + "]" : "";
-  const answer = (await rl.question(label + suffix + ": ")).trim();
+  const clearHint = allowClear ? "（输入 - 清空）" : "";
+  const answer = (await rl.question(label + suffix + clearHint + ": ")).trim();
+  if (allowClear && answer === "-") {
+    return "";
+  }
   return answer || defaultValue;
+}
+
+export async function collectDetailedRepositoryConfig(rl, repository, defaults) {
+  const prefix = repository.id + " ";
+  const port = repository.start?.port;
+  const modules = optionList(
+    await ask(
+      rl,
+      prefix + "主要模块，逗号分隔",
+      (repository.modules || []).join(","),
+      true,
+    ),
+  );
+  const command = await ask(
+    rl,
+    prefix + "项目启动命令",
+    repository.start?.command || defaults.startCommand,
+    true,
+  );
+  const portText = await ask(
+    rl,
+    prefix + "启动端口，可留空",
+    port === null || port === undefined ? "" : String(port),
+    true,
+  );
+  const runtime = await ask(
+    rl,
+    prefix + "运行时版本范围，可留空",
+    repository.start?.runtime || defaults.runtime,
+    true,
+  );
+  const envVarNames = optionList(
+    await ask(
+      rl,
+      prefix + "所需环境变量名，逗号分隔",
+      (repository.dependencies?.env_var_names || defaults.envVarNames).join(","),
+      true,
+    ),
+  );
+  const configCenter = await ask(
+    rl,
+    prefix + "配置中心或外部服务依赖，可填 unknown",
+    repository.dependencies?.config_center || "unknown",
+    true,
+  );
+  const integrationMode = await ask(
+    rl,
+    prefix + "联调方式，例如 direct 或 whistle",
+    repository.integration?.mode || "direct",
+    true,
+  );
+  const availableEnvironments = optionList(
+    await ask(
+      rl,
+      prefix + "环境列表，逗号分隔",
+      (repository.environments?.available || ["local"]).join(","),
+      true,
+    ),
+  );
+  const localOperable = optionList(
+    await ask(
+      rl,
+      prefix + "本地允许操作的环境，逗号分隔",
+      (repository.environments?.local_operable || ["local"]).join(","),
+      true,
+    ),
+  );
+  const remoteRead = optionList(
+    await ask(
+      rl,
+      prefix + "明确允许远程只读的环境，逗号分隔，默认无",
+      (repository.environments?.remote_read || []).join(","),
+      true,
+    ),
+  );
+  const remoteWrite = optionList(
+    await ask(
+      rl,
+      prefix + "明确允许远程写入的非生产环境，逗号分隔，默认无",
+      (repository.environments?.remote_write || []).join(","),
+      true,
+    ),
+  );
+  const switchMethod = await ask(
+    rl,
+    prefix + "环境切换或修改方式，可填 unknown",
+    repository.environments?.switch_method || "unknown",
+    true,
+  );
+  return {
+    ...repository,
+    modules,
+    start: {
+      command: command || "unknown",
+      port: portText ? Number(portText) : null,
+      runtime: runtime || null,
+    },
+    dependencies: {
+      env_var_names: envVarNames,
+      config_center: configCenter || "unknown",
+    },
+    integration: { mode: integrationMode || "unknown" },
+    environments: {
+      available: availableEnvironments,
+      local_operable: localOperable,
+      remote_read: remoteRead,
+      remote_write: remoteWrite,
+      switch_method: switchMethod || "unknown",
+    },
+  };
 }
 
 async function collectSetupConfig(options = {}) {
@@ -245,6 +359,25 @@ async function collectSetupConfig(options = {}) {
       ).toLowerCase();
       if (keep !== "yes") {
         repositories.length = 0;
+      } else if (detailed) {
+        for (const [index, repository] of repositories.entries()) {
+          const identity = assertRepositoryRegistration(repository);
+          const role = await ask(
+            rl,
+            repository.id + " 仓库角色",
+            repository.role || "unknown",
+          );
+          repositories[index] = await collectDetailedRepositoryConfig(
+            rl,
+            {
+              ...repository,
+              path: identity.path,
+              remote: identity.remote,
+              role: role || "unknown",
+            },
+            detectedRepositoryDefaults(identity.path),
+          );
+        }
       }
     }
     while (true) {
@@ -284,83 +417,43 @@ async function collectSetupConfig(options = {}) {
           throw new Error("代码仓库路径重复: " + id);
         }
       }
-      const role = await ask(rl, "仓库角色", "unknown");
-      let modules = [];
-      let command = defaults.startCommand;
-      let portText = "";
-      let runtime = defaults.runtime;
-      let envVarNames = defaults.envVarNames;
-      let configCenter = "unknown";
-      let integrationMode = "direct";
-      let availableEnvironments = ["local"];
-      let localOperable = ["local"];
-      let remoteRead = [];
-      let remoteWrite = [];
-      let switchMethod = "unknown";
-      if (detailed) {
-        modules = optionList(await ask(rl, "主要模块，逗号分隔"));
-        command = await ask(rl, "项目启动命令", defaults.startCommand);
-        portText = await ask(rl, "启动端口，可留空");
-        runtime = await ask(rl, "运行时版本范围，可留空", defaults.runtime);
-        envVarNames = optionList(
-          await ask(rl, "所需环境变量名，逗号分隔", defaults.envVarNames.join(",")),
-        );
-        configCenter = await ask(
-          rl,
-          "配置中心或外部服务依赖，可填 unknown",
-          "unknown",
-        );
-        integrationMode = await ask(
-          rl,
-          "联调方式，例如 direct 或 whistle",
-          "direct",
-        );
-        availableEnvironments = optionList(
-          await ask(rl, "环境列表，逗号分隔", "local"),
-        );
-        localOperable = optionList(
-          await ask(rl, "本地允许操作的环境，逗号分隔", "local"),
-        );
-        remoteRead = optionList(
-          await ask(rl, "明确允许远程只读的环境，逗号分隔，默认无"),
-        );
-        remoteWrite = optionList(
-          await ask(rl, "明确允许远程写入的非生产环境，逗号分隔，默认无"),
-        );
-        switchMethod = await ask(
-          rl,
-          "环境切换或修改方式，可填 unknown",
-          "unknown",
-        );
-      }
-      repositories.push({
+      const role = await ask(rl, id + " 仓库角色", "unknown");
+      let repository = {
         id,
         path: repoPath,
         remote: repositoryIdentity.remote,
         role: role || "unknown",
-        modules,
+        modules: [],
         start: {
-          command: command || "unknown",
-          port: portText ? Number(portText) : null,
-          runtime: runtime || null,
+          command: defaults.startCommand || "unknown",
+          port: null,
+          runtime: defaults.runtime || null,
         },
         dependencies: {
-          env_var_names: envVarNames,
-          config_center: configCenter || "unknown",
+          env_var_names: defaults.envVarNames,
+          config_center: "unknown",
         },
-        integration: { mode: integrationMode || "unknown" },
+        integration: { mode: "direct" },
         environments: {
-          available: availableEnvironments,
-          local_operable: localOperable,
-          remote_read: remoteRead,
-          remote_write: remoteWrite,
-          switch_method: switchMethod || "unknown",
+          available: ["local"],
+          local_operable: ["local"],
+          remote_read: [],
+          remote_write: [],
+          switch_method: "unknown",
         },
-      });
+      };
+      if (detailed) {
+        repository = await collectDetailedRepositoryConfig(
+          rl,
+          repository,
+          defaults,
+        );
+      }
+      repositories.push(repository);
     }
     return {
       schema_version: 1,
-      workflow_version: readText(join(ROOT, "WORKFLOW_VERSION")).trim(),
+      workflow_version: readJson(join(ROOT, "tools", "package.json")).version,
       project: { name: projectName, goal },
       agent,
       git_emails: gitEmails,
@@ -530,7 +623,7 @@ export async function runSetup(options) {
     interactive = true;
     config = await collectSetupConfig(options);
   }
-  config.workflow_version = readText(join(ROOT, "WORKFLOW_VERSION")).trim();
+  config.workflow_version = readJson(join(ROOT, "tools", "package.json")).version;
   validateSetupConfig(config);
   console.log(JSON.stringify(config, null, 2));
   console.log(

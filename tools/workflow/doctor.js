@@ -155,6 +155,7 @@ function validateSlices(task, label, add) {
 }
 
 function validateCheckpoints(taskDirectory, task, label, add) {
+  const requireFresh = task.phase !== "cancelled";
   if (task.checkpoints !== undefined && !isObject(task.checkpoints)) {
     add("error", label + " 的 checkpoints 必须是对象");
     return;
@@ -176,20 +177,24 @@ function validateCheckpoints(taskDirectory, task, label, add) {
         );
         if (!existsSync(artifact)) {
           add("error", label + " 的 " + phase + " checkpoint 产物不存在");
-        } else if (fileHash(artifact) !== checkpoint.content_hash) {
+        } else if (
+          requireFresh &&
+          fileHash(artifact) !== checkpoint.content_hash
+        ) {
           add("error", label + " 的 " + phase + " checkpoint 已失效");
         }
       } catch {
         add("error", label + " 的 " + phase + " checkpoint 路径越界");
       }
     }
-    if (
-      checkpoint.dependency_hashes !== undefined &&
-      !isObject(checkpoint.dependency_hashes)
-    ) {
+    if (!isObject(checkpoint.dependency_hashes)) {
       add("error", label + " 的 " + phase + " dependency_hashes 无效");
     } else {
+      if (!Object.hasOwn(checkpoint.dependency_hashes, "decisions")) {
+        add("error", label + " 的 " + phase + " checkpoint 缺少 decisions 依赖");
+      }
       const dependencyFiles = {
+        decisions: "decisions.md",
         prd: "prd.md",
         technical_design: "technical-design.md",
         implementation_spec: "spec.md",
@@ -204,7 +209,9 @@ function validateCheckpoints(taskDirectory, task, label, add) {
             : undefined;
         if (currentHash === undefined) {
           add("error", label + " 的 " + phase + " 含未知 checkpoint 依赖 " + dependency);
-        } else if (currentHash !== recordedHash) {
+        } else if (currentHash === null && recordedHash !== null) {
+          add("error", label + " 的 " + phase + " checkpoint 依赖不存在：" + dependency);
+        } else if (requireFresh && currentHash !== recordedHash) {
           add("error", label + " 的 " + phase + " checkpoint 上游已失效");
         }
       }
@@ -235,7 +242,7 @@ function validateCheckpoints(taskDirectory, task, label, add) {
   if (task.approvals !== undefined && !isObject(task.approvals)) {
     add("error", label + " 的 approvals 必须是对象");
   }
-  if (task.schema_version >= 2 && PHASES.includes(task.phase)) {
+  if (PHASES.includes(task.phase)) {
     const currentIndex = PHASES.indexOf(task.phase);
     for (const phase of PHASES.slice(0, currentIndex)) {
       if (phase === "done") {
@@ -262,7 +269,7 @@ function validateDelivery(task, label, repositories, add) {
   }
   const ids = new Set();
   for (const entry of entries) {
-    const repoId = entry?.id || entry?.repo_id;
+    const repoId = entry?.id;
     if (!repoId || ids.has(repoId)) {
       add("error", label + " 的 delivery 仓库 ID 缺失或重复");
       continue;
@@ -313,17 +320,7 @@ function validateDelivery(task, label, repositories, add) {
     if (!Array.isArray(entry.initial_dirty_paths)) {
       add("error", label + " 的仓库 " + repoId + " initial_dirty_paths 必须是数组");
     }
-    if (
-      entry.initial_dirty_state !== null &&
-      !Array.isArray(entry.initial_dirty_state)
-    ) {
-      add("error", label + " 的仓库 " + repoId + " initial_dirty_state 无效");
-    }
-    if (
-      task.schema_version >= 2 &&
-      entry.migrated_from_schema !== 1 &&
-      !Array.isArray(entry.initial_dirty_state)
-    ) {
+    if (!Array.isArray(entry.initial_dirty_state)) {
       add("error", label + " 的仓库 " + repoId + " 缺少初始脏文件指纹");
     }
     if (task.phase === "done" && !entry.verification_tree) {
@@ -358,37 +355,6 @@ function validateDelivery(task, label, repositories, add) {
       }
     }
   }
-  const migrated = entries.some((entry) => entry?.migrated_from_schema === 1);
-  const receipt = task.migration_receipt;
-  if (migrated) {
-    if (!isObject(receipt)) {
-      add("error", label + " 缺少旧任务迁移回执");
-    } else {
-      if (receipt.from_schema !== 1) {
-        add("error", label + " 的迁移回执 from_schema 无效");
-      }
-      if (!String(receipt.reason || "").trim()) {
-        add("error", label + " 的迁移回执缺少 reason");
-      }
-      if (
-        !receipt.confirmed_at ||
-        Number.isNaN(Date.parse(String(receipt.confirmed_at)))
-      ) {
-        add("error", label + " 的迁移回执 confirmed_at 无效");
-      }
-      if (
-        !validRevision(receipt.revision) ||
-        receipt.revision > task.revision
-      ) {
-        add("error", label + " 的迁移回执 revision 无效");
-      }
-      if (!/^[a-f0-9]{64}$/.test(String(receipt.delivery_hash || ""))) {
-        add("error", label + " 的迁移回执 delivery_hash 无效");
-      }
-    }
-  } else if (receipt !== undefined) {
-    add("error", label + " 存在迁移回执但没有迁移交付记录");
-  }
 }
 
 function validateTaskDirectory(directory, repositories, add) {
@@ -403,10 +369,10 @@ function validateTaskDirectory(directory, repositories, add) {
   if (!isObject(task) || !task.title || !task.summary) {
     add("error", label + " 缺少 title 或 summary");
   }
-  if (task.schema_version !== undefined && !Number.isInteger(task.schema_version)) {
-    add("error", label + " 的 schema_version 无效");
+  if (task.schema_version !== 2) {
+    add("error", label + " 的 schema_version 不受支持");
   }
-  if (task.revision !== undefined && !validRevision(task.revision)) {
+  if (!validRevision(task.revision)) {
     add("error", label + " 的 revision 无效");
   }
   if (!TASK_TYPES.includes(task.type)) {
@@ -447,7 +413,6 @@ export function runDoctor(options = {}, root = ROOT) {
   for (const path of [
     ".gitattributes",
     "AGENTS.md",
-    "WORKFLOW_VERSION",
     "tools/workflow.js",
     "tools/agent-adapters.json",
     "tools/package.json",
@@ -508,7 +473,7 @@ export function runDoctor(options = {}, root = ROOT) {
       add("error", "仓库 " + repo.id + " 配置了生产环境写权限");
     }
   }
-  const currentVersion = readText(join(root, "WORKFLOW_VERSION")).trim();
+  const currentVersion = readJson(join(root, "tools", "package.json")).version;
   const configuredVersion = String(config.workflow_version || "");
   if (currentVersion.split(".")[0] !== configuredVersion.split(".")[0]) {
     add("error", "本地配置与工作流主版本不兼容");
@@ -590,27 +555,20 @@ export function runDoctor(options = {}, root = ROOT) {
     ) {
       add("error", "迭代 " + iterationId + " 缺少基础字段或 status 无效");
     }
-    if (
-      iterationJson.schema_version !== undefined &&
-      !Number.isInteger(iterationJson.schema_version)
-    ) {
-      add("error", "迭代 " + iterationId + " 的 schema_version 无效");
+    if (iterationJson.schema_version !== 2) {
+      add("error", "迭代 " + iterationId + " 的 schema_version 不受支持");
     }
-    if (
-      iterationJson.revision !== undefined &&
-      !validRevision(iterationJson.revision)
-    ) {
+    if (!validRevision(iterationJson.revision)) {
       add("error", "迭代 " + iterationId + " 的 revision 无效");
     }
-    if (iterationJson.id && iterationJson.id !== iterationId) {
+    if (iterationJson.id !== iterationId) {
       add("error", "迭代 " + iterationId + " 的稳定 ID 与目录名不一致");
     }
     if (["done", "cancelled"].includes(iterationJson.status)) {
       if (
-        iterationJson.schema_version >= 2 &&
-        (!isObject(iterationJson.closure_receipt) ||
-          iterationJson.closure_receipt.status !== iterationJson.status ||
-          iterationJson.closure_receipt.revision !== iterationJson.revision)
+        !isObject(iterationJson.closure_receipt) ||
+        iterationJson.closure_receipt.status !== iterationJson.status ||
+        iterationJson.closure_receipt.revision !== iterationJson.revision
       ) {
         add("error", "终态迭代 " + iterationId + " 的 closure_receipt 无效");
       }

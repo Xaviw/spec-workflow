@@ -18,10 +18,18 @@ export function buildContextPaths(
   iterationDirectory = null,
 ) {
   root = ensureExistingWithin(root, root);
+  const iterationsRoot = ensureExistingWithin(root, join(root, "iterations"));
   if (!SKILLS.includes(skill)) {
     throw new Error("未知 Skill: " + skill);
   }
-  const skillPath = join(root, ".agents", "skills", skill, "SKILL.md");
+  const skillDirectory = ensureExistingWithin(
+    root,
+    join(root, ".agents", "skills", skill),
+  );
+  const skillPath = ensureExistingWithin(
+    skillDirectory,
+    join(skillDirectory, "SKILL.md"),
+  );
   if (!existsSync(skillPath)) {
     throw new Error("找不到 Skill: " + skill);
   }
@@ -56,23 +64,30 @@ export function buildContextPaths(
   for (const token of tokens) {
     if (token === "AGENTS.md" || token === "AGENTS.local.md") {
       required.push(join(root, token));
-    } else if (token === "WORKFLOW_VERSION" || token.startsWith("tools/")) {
-      required.push(join(root, token));
+    } else if (token.startsWith("tools/")) {
+      required.push(ensureExistingWithin(root, resolve(root, token)));
     } else if (taskDocs.has(token)) {
       if (taskDirectory) {
         const safeTask = ensureExistingWithin(
-          join(root, "iterations"),
+          iterationsRoot,
           taskDirectory,
         );
-        required.push(join(safeTask, token));
+        required.push(ensureExistingWithin(safeTask, join(safeTask, token)));
       } else if (iterationDirectory && token === "task.json") {
         const safeIteration = ensureExistingWithin(
-          join(root, "iterations"),
+          iterationsRoot,
           iterationDirectory,
         );
         for (const entry of readdirSync(safeIteration, { withFileTypes: true })) {
-          const path = join(safeIteration, entry.name, token);
-          if (entry.isDirectory() && existsSync(path)) {
+          if (!entry.isDirectory()) {
+            continue;
+          }
+          const task = ensureExistingWithin(
+            safeIteration,
+            join(safeIteration, entry.name),
+          );
+          const path = ensureExistingWithin(task, join(task, token));
+          if (existsSync(path)) {
             required.push(path);
           }
         }
@@ -86,25 +101,34 @@ export function buildContextPaths(
         throw new Error(skill + " 需要 --iteration");
       }
       const safeIteration = ensureExistingWithin(
-        join(root, "iterations"),
+        iterationsRoot,
         inferredIteration,
       );
-      required.push(join(safeIteration, token));
+      required.push(
+        ensureExistingWithin(safeIteration, join(safeIteration, token)),
+      );
     } else if (/^(?:project|iterations)\//.test(token)) {
-      required.push(join(root, token));
+      required.push(ensureExistingWithin(root, resolve(root, token)));
     }
   }
   if (taskDirectory) {
     const safeTask = ensureExistingWithin(
-      join(root, "iterations"),
+      iterationsRoot,
       taskDirectory,
     );
-    const taskPath = join(safeTask, "task.json");
+    const taskPath = ensureExistingWithin(safeTask, join(safeTask, "task.json"));
     if (existsSync(taskPath)) {
       const task = readJson(taskPath);
+      const repositoriesRoot = join(root, "project", "repositories");
       for (const repository of task.repositories || []) {
         required.push(
-          join(root, "project", "repositories", String(repository) + ".md"),
+          ensureExistingWithin(
+            root,
+            ensureExistingWithin(
+              repositoriesRoot,
+              join(repositoriesRoot, String(repository) + ".md"),
+            ),
+          ),
         );
       }
       for (const entry of task.context || []) {
@@ -120,7 +144,9 @@ export function buildContextPaths(
       required.push(policiesPath);
     }
   }
-  const uniqueRequired = [...new Set(required)];
+  const uniqueRequired = [
+    ...new Set(required.map((path) => ensureExistingWithin(root, path))),
+  ];
   const missing = uniqueRequired.filter((path) => !existsSync(path));
   const totalBytes = uniqueRequired.reduce(
     (total, path) => total + (existsSync(path) ? statSync(path).size : 0),

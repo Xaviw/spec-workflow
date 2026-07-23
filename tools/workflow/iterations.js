@@ -33,9 +33,16 @@ function assertOpenIteration(iteration, action) {
 }
 
 function nextIterationRevision(iteration, directory) {
-  iteration.schema_version = Math.max(Number(iteration.schema_version) || 1, 2);
-  iteration.id ||= directory.split(/[\\/]/).at(-1);
-  iteration.revision = (Number.isInteger(iteration.revision) ? iteration.revision : 0) + 1;
+  const id = directory.split(/[\\/]/).at(-1);
+  if (
+    iteration.schema_version !== 2 ||
+    iteration.id !== id ||
+    !Number.isInteger(iteration.revision) ||
+    iteration.revision < 0
+  ) {
+    throw new Error("iteration.json 格式不受支持");
+  }
+  iteration.revision += 1;
   iteration.updated_at = now();
   return iteration.revision;
 }
