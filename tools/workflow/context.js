@@ -3,13 +3,22 @@ import { dirname, join, relative, resolve } from "node:path";
 
 import {
   ROOT,
+  INDEPENDENT_SKILLS,
   SKILLS,
   ensureExistingWithin,
   readJson,
   readText,
 } from "./common.js";
+import { parseTaskData } from "./tasks.js";
+import { memoryReferencesFromFiles } from "./memory.js";
 
 const DEFAULT_CONTEXT_BUDGET = 128 * 1024;
+const CONTEXT_FREE_SKILLS = new Set([
+  "sw-setup",
+  "sw-doctor",
+  ...INDEPENDENT_SKILLS,
+]);
+const LOCAL_CONFIG_FREE_SKILLS = new Set(INDEPENDENT_SKILLS);
 
 export function buildContextPaths(
   skill,
@@ -46,8 +55,18 @@ export function buildContextPaths(
     join(root, "AGENTS.md"),
     skillPath,
   ];
+  const workflowMemoryContext =
+    !CONTEXT_FREE_SKILLS.has(skill) ||
+    Boolean(taskDirectory && INDEPENDENT_SKILLS.includes(skill));
+  if (workflowMemoryContext) {
+    required.push(join(root, "CONTEXT.md"));
+    required.push(join(root, "project", "index.md"));
+  }
   const localConfigPath = join(root, "AGENTS.local.md");
-  if (existsSync(localConfigPath)) {
+  if (
+    existsSync(localConfigPath) &&
+    !LOCAL_CONFIG_FREE_SKILLS.has(skill)
+  ) {
     required.push(localConfigPath);
   }
   const taskDocs = new Set([
@@ -118,9 +137,9 @@ export function buildContextPaths(
     );
     const taskPath = ensureExistingWithin(safeTask, join(safeTask, "task.json"));
     if (existsSync(taskPath)) {
-      const task = readJson(taskPath);
+      const task = parseTaskData(readJson(taskPath));
       const repositoriesRoot = join(root, "project", "repositories");
-      for (const repository of task.repositories || []) {
+      for (const repository of task.repositories) {
         required.push(
           ensureExistingWithin(
             root,
@@ -131,6 +150,14 @@ export function buildContextPaths(
           ),
         );
       }
+    }
+    const referenceSources = INDEPENDENT_SKILLS.includes(skill)
+      ? [...taskDocs]
+          .map((name) => join(safeTask, name))
+          .filter((path) => existsSync(path))
+      : required.filter((path) => path.startsWith(safeTask));
+    for (const reference of memoryReferencesFromFiles(referenceSources, root)) {
+      required.push(ensureExistingWithin(root, resolve(root, reference)));
     }
   }
   const uniqueRequired = [

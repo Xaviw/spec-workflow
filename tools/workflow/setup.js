@@ -17,6 +17,7 @@ import {
   writeText,
 } from "./common.js";
 import { ensureAdapterIgnored, installAdapter } from "./adapter.js";
+import { initializeMemory } from "./memory.js";
 
 function canonicalPathKey(path) {
   return normalize(path);
@@ -28,6 +29,14 @@ function canonicalRealpath(path) {
 }
 
 const WINDOWS_RESERVED_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+const SETUP_CONFIG_FIELDS = new Set([
+  "schema_version",
+  "project",
+  "agent",
+  "git_emails",
+  "repositories",
+  "permissions",
+]);
 
 export function assertPortableRepositoryId(value) {
   const id = String(value || "");
@@ -439,7 +448,6 @@ async function collectSetupConfig() {
     }
     return {
       schema_version: 1,
-      workflow_version: readJson(join(ROOT, "tools", "package.json")).version,
       project: { name: projectName, goal },
       agent,
       repositories,
@@ -455,6 +463,15 @@ async function collectSetupConfig() {
 }
 
 export function validateSetupConfig(config, root = ROOT) {
+  if (config?.schema_version !== 1) {
+    throw new Error("setup 配置的 schema_version 必须为 1");
+  }
+  const unknownFields = Object.keys(config).filter(
+    (field) => !SETUP_CONFIG_FIELDS.has(field),
+  );
+  if (unknownFields.length) {
+    throw new Error("setup 配置包含未知字段：" + unknownFields.join(", "));
+  }
   if (!config?.project?.name || !config?.project?.goal) {
     throw new Error("setup 配置缺少项目名称或目标");
   }
@@ -548,7 +565,8 @@ function writeProjectDocs(config) {
   const indexFile = join(projectDir, "index.md");
   const indexBase = readText(
     indexFile,
-    "# 项目索引\n\n这里记录已确认的项目目标和代码仓库导航。\n",
+    "# 项目索引\n\n这里记录已确认的项目目标、代码仓库导航和项目级当前事实。\n\n" +
+      "## 已验证的项目事实\n\n当前没有已验证的项目级事实。\n",
   );
   writeText(
     indexFile,
@@ -566,7 +584,8 @@ function writeProjectDocs(config) {
     );
     const base = readText(
       path,
-      "# " + repo.id + "\n\n在受管块之外补充该仓库已确认的长期说明。\n",
+      "# " + repo.id + "\n\n" +
+        "## 已验证的仓库事实\n\n在受管块之外补充该仓库已确认的长期事实。\n",
     );
     writeText(
       path,
@@ -595,6 +614,7 @@ function applySetup(config) {
   );
   writeText(LOCAL_CONFIG_FILE, replaceManagedBlock(localBase, config));
   writeProjectDocs(config);
+  initializeMemory(config.project);
   installAdapter(config.agent.id, config, { apply: true });
   ensureAdapterIgnored(config.agent.id, config);
 }
@@ -614,7 +634,6 @@ export async function runSetup(options) {
     true,
   );
   config.git_emails = gitEmail ? [gitEmail] : [];
-  config.workflow_version = readJson(join(ROOT, "tools", "package.json")).version;
   validateSetupConfig(config);
   const previewConfig = { ...config };
   delete previewConfig.git_emails;

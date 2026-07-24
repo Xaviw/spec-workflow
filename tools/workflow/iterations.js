@@ -8,6 +8,7 @@ import {
   fileHash,
   fingerprint,
   iterationLockPath,
+  parseIterationData,
   pathHasCommit,
   readJson,
   resolveIteration,
@@ -33,15 +34,7 @@ function assertOpenIteration(iteration, action) {
 }
 
 function nextIterationRevision(iteration, directory) {
-  const id = directory.split(/[\\/]/).at(-1);
-  if (
-    iteration.schema_version !== 2 ||
-    iteration.id !== id ||
-    !Number.isInteger(iteration.revision) ||
-    iteration.revision < 0
-  ) {
-    throw new Error("iteration.json 格式不受支持");
-  }
+  parseIterationData(iteration, directory);
   iteration.revision += 1;
   iteration.updated_at = now();
   return iteration.revision;
@@ -87,7 +80,10 @@ export function finishIteration(reference, options) {
       finishIteration(reference, { ...options, __iterationLocked: true }),
     );
   }
-  const iterationJson = readJson(join(iteration, "iteration.json"));
+  const iterationJson = parseIterationData(
+    readJson(join(iteration, "iteration.json")),
+    iteration,
+  );
   assertOpenIteration(iterationJson, "完成迭代");
   const aggregate = aggregateRelease(iteration);
   if (aggregate.unfinished.length) {
@@ -141,7 +137,10 @@ export function cancelIteration(reference, options) {
       cancelIteration(reference, { ...options, __iterationLocked: true }),
     );
   }
-  const iterationJson = readJson(join(iteration, "iteration.json"));
+  const iterationJson = parseIterationData(
+    readJson(join(iteration, "iteration.json")),
+    iteration,
+  );
   assertOpenIteration(iterationJson, "取消迭代");
   const aggregate = aggregateRelease(iteration);
   if (aggregate.done.length || aggregate.unfinished.length || aggregate.changes.length) {
@@ -169,7 +168,10 @@ export function deleteIteration(reference, options) {
       deleteIteration(reference, { ...options, __iterationLocked: true }),
     );
   }
-  const iterationJson = readJson(join(iteration, "iteration.json"));
+  const iterationJson = parseIterationData(
+    readJson(join(iteration, "iteration.json")),
+    iteration,
+  );
   assertOpenIteration(iterationJson, "删除迭代");
   const extra = readdirSync(iteration).filter((name) => name !== "iteration.json");
   if (

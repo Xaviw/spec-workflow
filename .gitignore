@@ -2,8 +2,8 @@
 AGENTS.local.md
 CLAUDE.md
 .claude
+.spec-workflow-memory.lock
 
 # 常见本地文件
 .DS_Store
 Thumbs.db
-

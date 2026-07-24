@@ -94,24 +94,73 @@ export const PHASES = [
 
 export const TASK_TYPES = ["feature", "bug", "change", "maintenance"];
 
-export const SKILLS = [
+const ITERATION_FIELDS = new Set([
+  "schema_version",
+  "id",
+  "revision",
+  "title",
+  "goal",
+  "status",
+  "created_at",
+  "target_version",
+  "updated_at",
+  "release_plan",
+  "closed_at",
+  "closure_receipt",
+  "closure_reason",
+]);
+
+export function parseIterationData(raw, directory) {
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    raw.schema_version !== 2 ||
+    raw.id !== basename(directory) ||
+    !Number.isInteger(raw.revision) ||
+    raw.revision < 0 ||
+    typeof raw.title !== "string" ||
+    !raw.title.trim() ||
+    typeof raw.goal !== "string" ||
+    !raw.goal.trim() ||
+    !["open", "done", "cancelled"].includes(raw.status) ||
+    typeof raw.created_at !== "string" ||
+    Number.isNaN(Date.parse(raw.created_at)) ||
+    !Object.hasOwn(raw, "target_version") ||
+    (raw.target_version !== null && typeof raw.target_version !== "string")
+  ) {
+    throw new Error("iteration.json 格式不受支持");
+  }
+  const unknownFields = Object.keys(raw).filter(
+    (field) => !ITERATION_FIELDS.has(field),
+  );
+  if (unknownFields.length) {
+    throw new Error("iteration.json 包含未知字段：" + unknownFields.join(", "));
+  }
+  return raw;
+}
+
+export const WORKFLOW_SKILLS = [
   "sw-setup",
   "sw-doctor",
   "sw-route-task",
+  "sw-domain-modeling",
   "sw-simple-change",
   "sw-prd",
   "sw-technical-design",
   "sw-spec",
   "sw-implement",
-  "sw-code-review",
   "sw-verify",
   "sw-release-plan",
-  "sw-writing-great-skills",
 ];
 
-export function legacySkillName(skill) {
-  return "spec-driven-" + skill.slice(3);
-}
+export const INDEPENDENT_SKILLS = [
+  "code-review",
+  "grilling",
+  "writing-great-skills",
+];
+
+export const SKILLS = [...WORKFLOW_SKILLS, ...INDEPENDENT_SKILLS];
 
 export function readText(path, fallback = "") {
   return existsSync(path) ? readFileSync(path, "utf8") : fallback;

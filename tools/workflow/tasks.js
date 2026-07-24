@@ -22,6 +22,7 @@ import {
   listIterationDirectories,
   listTaskDirectories,
   optionList,
+  parseIterationData,
   pathHasCommit,
   readJson,
   readLocalConfig,
@@ -35,10 +36,44 @@ import {
   writeJson,
   writeText,
 } from "./common.js";
+import { memoryDependencyHashes } from "./memory.js";
 
 const TASK_SCHEMA_VERSION = 2;
 const SLICE_STATUSES = ["pending", "in_progress", "done"];
 const TERMINAL_PHASES = new Set(["done", "cancelled"]);
+const TASK_FIELDS = new Set([
+  "schema_version",
+  "revision",
+  "title",
+  "summary",
+  "type",
+  "phase",
+  "repositories",
+  "modules",
+  "related_tasks",
+  "slices",
+  "checkpoints",
+  "approvals",
+  "delivery",
+  "cancelled_from",
+  "closure_reason",
+  "closed_at",
+  "reopen_history",
+]);
+const DELIVERY_REPOSITORY_FIELDS = new Set([
+  "id",
+  "canonical_root",
+  "branch",
+  "baseline_head",
+  "initial_dirty_paths",
+  "initial_dirty_state",
+  "captured_at",
+  "verification_tree",
+  "commits",
+  "final_head",
+  "remaining_dirty_paths",
+  "finalized_at",
+]);
 const PHASE_FILES = {
   prd: "prd.md",
   technical_design: "technical-design.md",
@@ -81,7 +116,7 @@ const REQUIRED_SECTIONS = {
     ["验收标准到验证的映射"],
     ["测试与联调"],
     ["项目文档同步"],
-    ["Slices", "Slices（如需要）"],
+    ["Slices"],
     ["风险和停止条件"],
   ],
   verification: [
@@ -99,68 +134,130 @@ const PLACEHOLDER_PATTERN =
   /(?:\b(?:TODO|TBD|FIXME)\b|\[TODO[^\]]*\]|<\s*(?:任务标题|待[^>]*|TODO)[^>]*>|待补充|待确认|待核对|待完善)/i;
 const AC_PATTERN = /\bAC-\d{3}\b/gi;
 
-function normalizedTask(raw) {
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function parseTaskData(raw) {
   if (
+    !isObject(raw) ||
     raw.schema_version !== TASK_SCHEMA_VERSION ||
     !Number.isInteger(raw.revision) ||
     raw.revision < 0
   ) {
     throw new Error("task.json 格式不受支持");
   }
+  const unknownFields = Object.keys(raw).filter((field) => !TASK_FIELDS.has(field));
+  if (unknownFields.length) {
+    throw new Error("task.json 包含未知字段：" + unknownFields.join(", "));
+  }
+  if (
+    typeof raw.title !== "string" ||
+    !raw.title.trim() ||
+    typeof raw.summary !== "string" ||
+    !raw.summary.trim() ||
+    !TASK_TYPES.includes(raw.type) ||
+    ![...PHASES, "cancelled"].includes(raw.phase)
+  ) {
+    throw new Error("task.json 缺少有效的 title、summary、type 或 phase");
+  }
+  for (const field of [
+    "repositories",
+    "modules",
+    "related_tasks",
+    "slices",
+  ]) {
+    if (!Array.isArray(raw[field])) {
+      throw new Error("task.json 的 " + field + " 必须是数组");
+    }
+  }
+  for (const field of ["repositories", "modules", "related_tasks"]) {
+    if (raw[field].some((value) => typeof value !== "string")) {
+      throw new Error("task.json 的 " + field + " 必须只包含字符串");
+    }
+  }
+  for (const field of ["checkpoints", "approvals", "delivery"]) {
+    if (!isObject(raw[field])) {
+      throw new Error("task.json 的 " + field + " 必须是对象");
+    }
+  }
+  if (!Array.isArray(raw.delivery.repositories)) {
+    throw new Error("task.json 的 delivery.repositories 必须是数组");
+  }
+  const slices = sliceValidation(raw.slices);
+  if (!slices.valid) {
+    throw new Error("task.json 的 Slices 无效：" + slices.errors.join("；"));
+  }
+  const deliveryRepositories = raw.delivery.repositories.map((repository) => {
+    if (!isObject(repository)) {
+      throw new Error("task.json 的 delivery.repositories 必须只包含对象");
+    }
+    const unknown = Object.keys(repository).filter(
+      (field) => !DELIVERY_REPOSITORY_FIELDS.has(field),
+    );
+    if (unknown.length) {
+      throw new Error("task.json 的 delivery 包含未知字段：" + unknown.join(", "));
+    }
+    for (const field of ["initial_dirty_paths", "initial_dirty_state", "commits"]) {
+      if (!Array.isArray(repository[field])) {
+        throw new Error("task.json 的 delivery." + field + " 必须是数组");
+      }
+    }
+    if (
+      repository.initial_dirty_paths.some((value) => typeof value !== "string") ||
+      repository.commits.some((value) => typeof value !== "string") ||
+      repository.initial_dirty_state.some((entry) => !isObject(entry))
+    ) {
+      throw new Error("task.json 的 delivery 数组字段格式无效");
+    }
+    if (
+      repository.remaining_dirty_paths !== undefined &&
+      !Array.isArray(repository.remaining_dirty_paths)
+    ) {
+      throw new Error("task.json 的 delivery.remaining_dirty_paths 必须是数组");
+    }
+    return {
+      ...repository,
+      initial_dirty_paths: [...repository.initial_dirty_paths],
+      initial_dirty_state: repository.initial_dirty_state.map((entry) => ({ ...entry })),
+      commits: [...repository.commits],
+      ...(repository.remaining_dirty_paths === undefined
+        ? {}
+        : { remaining_dirty_paths: [...repository.remaining_dirty_paths] }),
+    };
+  });
   const task = {
     ...raw,
-    schema_version: TASK_SCHEMA_VERSION,
-    revision: raw.revision,
-    repositories: Array.isArray(raw.repositories) ? [...raw.repositories] : [],
-    modules: Array.isArray(raw.modules) ? [...raw.modules] : [],
-    related_tasks: Array.isArray(raw.related_tasks) ? [...raw.related_tasks] : [],
-    slices: Array.isArray(raw.slices) ? raw.slices.map(normalizedSlice) : [],
-    checkpoints:
-      raw.checkpoints && typeof raw.checkpoints === "object"
-        ? { ...raw.checkpoints }
-        : {},
-    approvals:
-      raw.approvals && typeof raw.approvals === "object"
-        ? { ...raw.approvals }
-        : {},
+    repositories: [...raw.repositories],
+    modules: [...raw.modules],
+    related_tasks: [...raw.related_tasks],
+    slices: slices.slices,
+    checkpoints: { ...raw.checkpoints },
+    approvals: { ...raw.approvals },
     delivery: {
-      ...(raw.delivery && typeof raw.delivery === "object" ? raw.delivery : {}),
-      repositories: Array.isArray(raw.delivery?.repositories)
-        ? raw.delivery.repositories.map((repository) => ({
-            ...repository,
-            initial_dirty_paths: Array.isArray(repository.initial_dirty_paths)
-              ? [...repository.initial_dirty_paths]
-              : [],
-            initial_dirty_state: Array.isArray(repository.initial_dirty_state)
-              ? repository.initial_dirty_state.map((entry) => ({ ...entry }))
-              : repository.initial_dirty_state ?? null,
-            commits: Array.isArray(repository.commits)
-              ? [...repository.commits]
-              : [],
-          }))
-        : [],
+      ...raw.delivery,
+      repositories: deliveryRepositories,
     },
   };
   return task;
 }
 
-function normalizedSlice(slice, index = 0) {
-  const value = slice && typeof slice === "object" ? slice : {};
+function normalizedSlice(slice) {
+  const value = slice && typeof slice === "object" && !Array.isArray(slice)
+    ? slice
+    : {};
   return {
-    ...value,
-    id: String(value.id || String(index + 1).padStart(2, "0") + "-slice"),
-    title: String(value.title || value.summary || ""),
-    status: String(value.status || "pending"),
+    id: typeof value.id === "string" ? value.id : "",
+    title: typeof value.title === "string" ? value.title : "",
+    status: typeof value.status === "string" ? value.status : "",
     blocked_by: Array.isArray(value.blocked_by)
-      ? [...value.blocked_by].map(String)
-      : Array.isArray(value.blockedBy)
-        ? [...value.blockedBy].map(String)
-        : [],
+      ? [...value.blocked_by]
+      : [],
   };
 }
 
 function expectedRevision(options = {}) {
-  const value = options["expected-revision"] ?? options.expectedRevision;
+  const value = options["expected-revision"];
   if (value === undefined) {
     return null;
   }
@@ -190,7 +287,7 @@ function mutateTask(reference, options, mutation) {
   return withFileLocks(
     [iterationLockPath(dirname(directory)), taskLockPath(directory)],
     () => {
-      const task = normalizedTask(readJson(path));
+      const task = parseTaskData(readJson(path));
       assertExpectedRevision(task, options);
       const result = mutation(task, directory);
       task.schema_version = TASK_SCHEMA_VERSION;
@@ -612,18 +709,8 @@ function deliveryRepositoryValidation(task, options = {}) {
             errors.push("仓库最后一个交付 commit 必须等于当前 HEAD：" + id);
           }
           const currentDirty = repositoryDirtyState(current.canonical_root);
-          if (
-            Array.isArray(recorded.initial_dirty_state) &&
-            fingerprint(currentDirty) !== fingerprint(recorded.initial_dirty_state)
-          ) {
+          if (fingerprint(currentDirty) !== fingerprint(recorded.initial_dirty_state)) {
             errors.push("仓库初始脏文件内容或状态已变化：" + id);
-          } else if (
-            !Array.isArray(recorded.initial_dirty_state) &&
-            currentDirty.some(
-              (entry) => !(recorded.initial_dirty_paths || []).includes(entry.path),
-            )
-          ) {
-            errors.push("仓库仍有基线外未提交文件：" + id);
           }
         }
       }
@@ -707,19 +794,8 @@ function finalizeDelivery(task, commitOption) {
       );
     }
     const dirtyState = repositoryDirtyState(root);
-    if (
-      Array.isArray(recorded.initial_dirty_state) &&
-      fingerprint(dirtyState) !== fingerprint(recorded.initial_dirty_state)
-    ) {
+    if (fingerprint(dirtyState) !== fingerprint(recorded.initial_dirty_state)) {
       throw new Error("仓库初始脏文件内容或状态已变化：" + id);
-    }
-    if (
-      !Array.isArray(recorded.initial_dirty_state) &&
-      dirtyState.some(
-        (entry) => !(recorded.initial_dirty_paths || []).includes(entry.path),
-      )
-    ) {
-      throw new Error("仓库仍有基线外未提交文件：" + id);
     }
     recorded.commits = expectedCommits;
     recorded.final_head = finalHead;
@@ -732,10 +808,29 @@ function finalizeDelivery(task, commitOption) {
 function sliceValidation(slices) {
   const errors = [];
   const byId = new Map();
-  for (const [index, raw] of slices.entries()) {
-    const slice = normalizedSlice(raw, index);
+  const allowedFields = new Set(["id", "title", "status", "blocked_by"]);
+  for (const raw of slices) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      errors.push("Slice 必须是对象");
+    }
+    const value = raw && typeof raw === "object" && !Array.isArray(raw)
+      ? raw
+      : {};
+    const unsupported = Object.keys(value).filter((key) => !allowedFields.has(key));
+    if (unsupported.length) {
+      errors.push("Slice 包含未知字段：" + unsupported.join(", "));
+    }
+    if (!Array.isArray(value.blocked_by)) {
+      errors.push("Slice blocked_by 必须是数组：" + String(value.id || "<unknown>"));
+    } else if (value.blocked_by.some((dependency) => typeof dependency !== "string")) {
+      errors.push("Slice blocked_by 必须只包含字符串：" + String(value.id || "<unknown>"));
+    }
+    const slice = normalizedSlice(value);
     if (!slice.id.trim()) {
       errors.push("Slice ID 不能为空");
+    }
+    if (!slice.title.trim()) {
+      errors.push("Slice title 不能为空：" + (slice.id || "<unknown>"));
     }
     if (byId.has(slice.id)) {
       errors.push("Slice ID 重复：" + slice.id);
@@ -808,7 +903,31 @@ function phaseDependencies(task, directory, phase) {
       ? task.checkpoints.implementation?.content_hash || null
       : phaseSnapshot(task, directory, "implementation").content_hash;
   }
+  hashes.memory = memoryDependencyHashes(
+    memorySourceFiles(directory, phase),
+    ROOT,
+  );
   return hashes;
+}
+
+function memorySourceFiles(directory, phase) {
+  const effectivePhase = phase === "done" ? "verification" : phase;
+  const phaseIndex = PHASES.indexOf(effectivePhase);
+  const files = [join(directory, "decisions.md")];
+  for (const [candidate, file] of Object.entries(PHASE_FILES)) {
+    if (PHASES.indexOf(candidate) <= phaseIndex) {
+      files.push(join(directory, file));
+    }
+  }
+  return files;
+}
+
+function memoryDependencyErrors(directory, phase) {
+  return Object.entries(
+    memoryDependencyHashes(memorySourceFiles(directory, phase), ROOT),
+  )
+    .filter(([, hash]) => hash === null)
+    .map(([path]) => "长期记忆依赖不存在：" + path);
 }
 
 function phaseSnapshot(task, directory, phase) {
@@ -1027,6 +1146,7 @@ function validateTaskObject(task, directory, requestedPhase) {
     blockers.push("任务已取消");
   } else {
     blockers.push(...gateForPhase(task, directory, requestedPhase, artifacts));
+    blockers.push(...memoryDependencyErrors(directory, requestedPhase));
   }
   blockers = uniqueErrors(blockers);
   const ready = blockers.length === 0;
@@ -1035,7 +1155,7 @@ function validateTaskObject(task, directory, requestedPhase) {
 
 function inspectTask(reference, options = {}) {
   const directory = resolveTask(reference);
-  const task = normalizedTask(readJson(join(directory, "task.json")));
+  const task = parseTaskData(readJson(join(directory, "task.json")));
   const requestedPhase = String(options.phase || task.phase);
   return {
     directory,
@@ -1149,7 +1269,10 @@ export function createTask(options = {}) {
     throw new Error(repositoryValidation.errors.join("；"));
   }
   return withFileLocks([iterationLockPath(iteration)], () => {
-    const iterationJson = readJson(join(iteration, "iteration.json"));
+    const iterationJson = parseIterationData(
+      readJson(join(iteration, "iteration.json")),
+      iteration,
+    );
     if (iterationJson.status !== "open") {
       throw new Error("只能在开放迭代中创建任务");
     }
@@ -1250,7 +1373,11 @@ export function reopenTask(reference, phase, options = {}) {
     if (!PHASES.includes(phase) || phase === "done") {
       throw new Error("重开目标阶段必须是 prd 到 verification");
     }
-    const iteration = readJson(join(dirname(directory), "iteration.json"));
+    const iterationDirectory = dirname(directory);
+    const iteration = parseIterationData(
+      readJson(join(iterationDirectory, "iteration.json")),
+      iterationDirectory,
+    );
     if (iteration.status !== "open") {
       throw new Error("已结束迭代中的任务不能重开；请在新迭代创建关联任务");
     }
@@ -1280,7 +1407,7 @@ export function setTaskSlices(reference, slices, options = {}) {
     if (task.phase !== "implementation_spec") {
       throw new Error("只能在 implementation_spec 阶段定义 Slices");
     }
-    const validation = sliceValidation(slices.map(normalizedSlice));
+    const validation = sliceValidation(slices);
     if (!validation.valid) {
       throw new Error("Slices 无效：" + validation.errors.join("；"));
     }
@@ -1341,7 +1468,9 @@ function taskReferences(taskDirectory) {
     if (directory === taskDirectory) {
       return false;
     }
-    const related = readJson(join(directory, "task.json")).related_tasks || [];
+    const related = parseTaskData(
+      readJson(join(directory, "task.json")),
+    ).related_tasks;
     return related.includes(id) || related.includes(rel);
   });
 }
@@ -1353,7 +1482,7 @@ function taskHasCommit(taskDirectory) {
 export function deleteTask(reference, options = {}) {
   const directory = resolveTask(reference);
   function assertDeletable() {
-    const task = normalizedTask(readJson(join(directory, "task.json")));
+    const task = parseTaskData(readJson(join(directory, "task.json")));
     assertExpectedRevision(task, options);
     const allowedFiles = new Set(["task.json", "prd.md", "decisions.md"]);
     const extra = readdirSync(directory).filter((name) => !allowedFiles.has(name));
@@ -1395,10 +1524,17 @@ export function moveTask(reference, options = {}) {
   const destinationIteration = resolveIteration(String(options.iteration || ""));
   const destination = join(destinationIteration, basename(source));
   function currentTask() {
-    const task = normalizedTask(readJson(join(source, "task.json")));
+    const task = parseTaskData(readJson(join(source, "task.json")));
     assertExpectedRevision(task, options);
-    const sourceIteration = readJson(join(dirname(source), "iteration.json"));
-    const destinationJson = readJson(join(destinationIteration, "iteration.json"));
+    const sourceIterationDirectory = dirname(source);
+    const sourceIteration = parseIterationData(
+      readJson(join(sourceIterationDirectory, "iteration.json")),
+      sourceIterationDirectory,
+    );
+    const destinationJson = parseIterationData(
+      readJson(join(destinationIteration, "iteration.json")),
+      destinationIteration,
+    );
     if (TERMINAL_PHASES.has(task.phase)) {
       throw new Error("终态任务不能移动");
     }
@@ -1507,8 +1643,12 @@ export function taskCandidates() {
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const candidates = [];
   for (const directory of listTaskDirectories()) {
-    const iteration = readJson(join(dirname(directory), "iteration.json"));
-    const task = readJson(join(directory, "task.json"));
+    const iterationDirectory = dirname(directory);
+    const iteration = parseIterationData(
+      readJson(join(iterationDirectory, "iteration.json")),
+      iterationDirectory,
+    );
+    const task = parseTaskData(readJson(join(directory, "task.json")));
     if (
       iteration.status !== "open" ||
       task.phase === "cancelled" ||
@@ -1529,8 +1669,8 @@ export function taskCandidates() {
       title: task.title,
       summary: task.summary,
       phase: task.phase,
-      repositories: task.repositories || [],
-      modules: task.modules || [],
+      repositories: task.repositories,
+      modules: task.modules,
       source,
       ...metadata,
     });

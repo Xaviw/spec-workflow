@@ -18,7 +18,7 @@ node tools/workflow.js task create --iteration <iteration-id> --title "任务名
 node tools/workflow.js task status <task-path>
 ```
 
-setup 只修改工作流仓库。私有路径和偏好写入 Git 忽略的 `AGENTS.local.md`；密钥值仍保存在环境变量、`.env` 或密钥管理系统中。
+setup 只修改工作流仓库，并首次创建根目录 `CONTEXT.md` 和 `project/memory.json` 作为项目长期记忆入口及受管状态。私有路径和偏好写入 Git 忽略的 `AGENTS.local.md`；密钥值仍保存在环境变量、`.env` 或密钥管理系统中。
 
 ## 核心模型
 
@@ -39,13 +39,19 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 
 PRD 使用 `AC-001` 等稳定验收 ID。技术方案和 spec 必须覆盖全部 AC；验证记录为每个 AC 写 `pass`、`human-confirmed`、`waived`、`failed` 或 `unverified`。通过状态必须有证据，豁免必须有理由。
 
-确认后修改上游文档会自动使相关 checkpoint 变为 stale，不能仅靠再次添加 `--confirmed` 跳过。`task.json.revision` 用于并发保护，长流程可传 `--expected-revision <n>`。
+确认后修改上游文档，或修改阶段文档显式引用的 `CONTEXT.md`、ADR、项目事实，会自动使相关 checkpoint 变为 stale，不能仅靠再次添加 `--confirmed` 跳过。`task.json.revision` 与 `project/memory.json.revision` 分别保护任务和共享长期记忆，写入时传 `--expected-revision <n>`。
 
 ## 术语参考
 
 | 术语 | 含义 |
 | --- | --- |
-| grilling | 通过拷问澄清需求。 |
+| grilling / `grilling` | 按决策依赖分轮追问并确认需求、方案或其他未决取舍。 |
+| 项目长期记忆 | 跨任务保留的项目级认知，由 `CONTEXT.md` 中的专业术语和关键决策索引、根目录 ADR，以及 `project/index.md` 和 `project/repositories/*.md` 中验证后的当前事实共同组成。 |
+| 专业术语 | 项目内反复使用、含义明确且有统一名称的业务或产品概念；同义词和避免用语记录在 `CONTEXT.md`。 |
+| `CONTEXT.md` | 工作流原生 Skill 的项目级必读入口，保存项目简介、专业术语和关键决策索引。 |
+| ADR | 关键决策记录；只记录难以逆转、脱离背景会令人意外且存在真实取舍的项目级决定。完整正文位于根目录 `adr/`。 |
+| domain modeling / `sw-domain-modeling` | 维护专业术语和关键决策的过程与 Skill；可由用户直接调用，也会在其他阶段形成新术语或重要取舍时调用。 |
+| `decisions.md` | 单个任务的追加式选择记录；只有达到 ADR 门槛的决定才进入项目长期记忆。 |
 | AC / `AC-001` | 验收标准及其稳定 ID。 |
 | checkpoint | 已确认阶段产物及依赖的快照。 |
 | `revision` | 防止并发覆盖的修改计数器。 |
@@ -61,6 +67,29 @@ PRD 使用 `AC-001` 等稳定验收 ID。技术方案和 spec 必须覆盖全部
 | receipt | 确认或收口的结构化凭据。 |
 | `pass` / `human-confirmed` / `waived` / `failed` / `unverified` | 通过、人工确认、豁免、失败或未验证。 |
 
+## Skill 协作
+
+`sw-` 前缀表示依赖任务状态、工作流文件或 CLI 的原生 Skill。无前缀 Skill 是独立能力，可由用户在任意仓库直接使用，也可由工作流 Skill 提供更精确的当前请求后调用；是否仅允许用户调用由 Skill 元数据决定。
+
+`grilling` 是无状态的结构化澄清 Skill。当前请求提供访谈主题、已知事实、待决范围和完成标准；它返回确认结果，但不写阶段产物、不推进阶段、不实施结论。
+
+- `sw-prd` 调用 `grilling` 完成需求澄清，再维护 `prd.md` 和 `decisions.md`。
+- `sw-technical-design` 仅在代码、项目事实和 ADR 无法确定技术取舍时调用 `grilling`。
+- `sw-spec` 或 `sw-implement` 发现新的用户决策时调用 `grilling`，并先同步、重新确认受影响的上游文档。
+- 访谈形成专业术语或达到 ADR 门槛的关键决定时，由调用方同时调用 `sw-domain-modeling`。
+
+## 项目长期记忆
+
+根目录 `CONTEXT.md` 和 `project/index.md` 是工作流原生 Skill 开始前的必读入口。前者使用“专业术语”统一项目表达，并用“关键决策”索引列出所有 ADR 的状态、范围和一句话摘要；后者提供项目级当前事实和仓库导航。Agent 只读取当前任务范围命中的 ADR 正文和仓库事实，避免把全部历史决定装入上下文。
+
+用户可以直接调用 `sw-domain-modeling` 澄清一个项目概念、统一叫法或记录关键决定。它通过 `memory` CLI 在根级锁内更新 `project/memory.json`、`CONTEXT.md` 和 ADR，并使用 revision 防止并发覆盖。普通任务选择继续写入任务 `decisions.md`；验证后的项目级事实写入 `project/index.md`，仓库事实写入 `project/repositories/<repo-id>.md`，不创建无法从入口发现的知识文件。
+
+用户也可以随时调用 `code-review` 审查明确指定的代码或变更范围；未指定范围时审查当前 Git 的暂存、未暂存和未跟踪变更。独立调用不依赖本工作流记忆；工作流带 task 调用时，由调用方使用 task delivery 或现场基线限定范围，并注入任务显式引用的项目事实和 ADR。
+
+`writing-great-skills` 仅在用户明确调用时创建、改进或诊断任意 Agent Skill，不依赖本工作流的任务、阶段或文件结构。
+
+一个工作流仓库管理一个逻辑项目，因此所有 ADR 统一放在根目录 `adr/`。即使决定只影响某个代码仓库，也只在索引和 ADR 的“范围”中标记仓库或模块，不建立仓库级 ADR 目录。
+
 ## 日常命令
 
 ```text
@@ -72,6 +101,10 @@ node tools/workflow.js task slices <task> --config slices.json
 node tools/workflow.js task slice <task> <slice-id> in_progress
 node tools/workflow.js task slice <task> <slice-id> done
 node tools/workflow.js context <skill-name> --task <task>
+node tools/workflow.js memory status [--json]
+node tools/workflow.js memory term --config term.json --expected-revision <n> --apply
+node tools/workflow.js memory adr --config adr.json --expected-revision <n> --apply
+node tools/workflow.js memory deprecate --config deprecate.json --expected-revision <n> --apply
 node tools/workflow.js doctor
 ```
 
@@ -124,10 +157,12 @@ node tools/workflow.js iteration done <iteration-id> --confirmed
 
 ```text
 AGENTS.md                  跨 Agent 最小入口
-.agents/skills/            分阶段 Skills
+.agents/skills/            工作流原生与独立能力 Skills
+CONTEXT.md                 setup 生成的专业术语与关键决策必读入口
+adr/                       按需创建的项目级关键决策记录
 tools/                     无第三方依赖的 Node.js CLI
 standards/                 由 AGENTS.md 按任务内容路由的工程规范
-project/                   setup 生成的项目事实
+project/                   受管 memory 状态、项目索引和外部仓库事实
 iterations/                迭代、任务和发布记录
 AGENTS.local.md            本地配置，不提交
 ```
@@ -140,5 +175,3 @@ npm test
 ```
 
 文本产物统一以 LF 提交，checkpoint hash 会规范化本地 CRLF/LF 差异。
-
-升级模板时合并上游 `AGENTS.md`、`.agents/skills/`、`standards/`、`tools/` 和 `.gitattributes`，保留 `project/`、`iterations/` 与 `AGENTS.local.md`，再运行测试和 doctor。`standards/` 随模板版本更新；合并时像代码变更一样审阅规范差异。

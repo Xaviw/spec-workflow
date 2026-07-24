@@ -13,7 +13,6 @@ import {
   ROOT,
   SKILLS,
   ensureWithin,
-  legacySkillName,
   readJson,
   readText,
   replaceTextBlock,
@@ -108,28 +107,15 @@ export function installAdapter(agentId, config, options = {}) {
     source: join(sourceRoot, skill),
     target: ensureWithin(targetRoot, join(targetRoot, skill)),
   }));
-  const legacyTargets = SKILLS.map((skill) =>
-    ensureWithin(targetRoot, join(targetRoot, legacySkillName(skill))),
-  ).filter(entryExists);
   const conflicts = skillTargets.filter(
     ({ source, target }) =>
       entryExists(target) && !linkPointsTo(target, source) && !sameSkill(source, target),
   );
-  if (apply && !replace && (conflicts.length || legacyTargets.length)) {
-    const conflict = conflicts[0]?.target || legacyTargets[0];
+  if (apply && !replace && conflicts.length) {
     throw new Error(
-      "适配目标冲突或仍使用旧 Skill 名称；先预览并明确添加 --replace: " +
-        relative(ROOT, conflict),
+      "适配目标已存在且内容不同；先预览并明确添加 --replace: " +
+        relative(ROOT, conflicts[0].target),
     );
-  }
-  for (const target of legacyTargets) {
-    actions.push({
-      action: replace ? (apply ? "remove" : "would-remove") : "conflict",
-      path: relative(ROOT, target),
-    });
-    if (apply && replace) {
-      rmSync(target, { recursive: true, force: true });
-    }
   }
   actions.push({
     action: apply ? "write" : "would-write",
@@ -202,7 +188,10 @@ export function ensureAdapterIgnored(agentId, config) {
   const skills = relative(ROOT, workflowPath(definition.adapter.skills_path)).replaceAll("\\", "/");
   const gitPath = runGit(["rev-parse", "--git-path", "info/exclude"], ROOT);
   const excludeFile = isAbsolute(gitPath) ? gitPath : resolve(ROOT, gitPath);
-  const patterns = ["/" + entry, "/" + skills + "/sw-*/"].join("\n");
+  const patterns = [
+    "/" + entry,
+    ...SKILLS.map((skill) => "/" + skills + "/" + skill),
+  ].join("\n");
   writeText(
     excludeFile,
     replaceTextBlock(readText(excludeFile), patterns, EXCLUDE_START, EXCLUDE_END),

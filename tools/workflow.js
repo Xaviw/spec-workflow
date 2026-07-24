@@ -29,6 +29,12 @@ import {
   confirmReleasePlan,
   writeReleasePlan,
 } from "./workflow/release.js";
+import {
+  createAdr,
+  deprecateAdr,
+  memoryStatus,
+  upsertTerm,
+} from "./workflow/memory.js";
 import { runSetup } from "./workflow/setup.js";
 import {
   cancelTask,
@@ -51,6 +57,10 @@ function help() {
       "",
       "setup [--config file] [--apply]",
       "doctor [--template] [--json]",
+      "memory status [--json]",
+      "memory term --config <json-file> [--expected-revision <n>] [--apply]",
+      "memory adr --config <json-file> [--expected-revision <n>] [--apply]",
+      "memory deprecate --config <json-file> [--expected-revision <n>] [--apply]",
       "adapter install --agent <id> [--apply] [--replace]",
       "iteration create --title <title> --goal <goal> [--target-version <version>]",
       "iteration release-plan <iteration-id> [--apply]",
@@ -121,6 +131,44 @@ async function main(argv) {
     printDoctor(checks, Boolean(options.json));
     if (checks.some((check) => check.level === "error")) {
       process.exitCode = 1;
+    }
+    return;
+  }
+  if (group === "memory" && action === "status") {
+    assertArity(positionals, 2, "memory status [--json]");
+    const result = memoryStatus();
+    console.log(
+      options.json
+        ? JSON.stringify(result, null, 2)
+        : [
+            "Revision: " + result.revision,
+            "专业术语: " + result.terms.length,
+            "ADR: " + result.adrs.length,
+          ].join("\n"),
+    );
+    return;
+  }
+  if (
+    group === "memory" &&
+    ["term", "adr", "deprecate"].includes(action)
+  ) {
+    assertArity(
+      positionals,
+      2,
+      "memory " + action + " --config <json-file> [--expected-revision <n>] [--apply]",
+    );
+    if (!options.config) {
+      throw new Error("memory " + action + " 需要 --config <json-file>");
+    }
+    const config = readJson(resolve(process.cwd(), String(options.config)));
+    const result = action === "term"
+      ? upsertTerm(config, options)
+      : action === "adr"
+        ? createAdr(config, options)
+        : deprecateAdr(config, options);
+    console.log(JSON.stringify(result, null, 2));
+    if (!options.apply) {
+      console.log("确认预览后添加 --apply，并传入当前 --expected-revision。");
     }
     return;
   }

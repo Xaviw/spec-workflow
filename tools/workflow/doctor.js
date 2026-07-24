@@ -5,15 +5,14 @@ import {
   ROOT,
   SKILLS,
   PHASES,
-  TASK_TYPES,
   ensureExistingWithin,
   extractManagedJson,
   fileHash,
   fingerprint,
   findSecretPaths,
   isGitRepository,
-  legacySkillName,
   listIterationDirectories,
+  parseIterationData,
   readJson,
   readText,
   runGit,
@@ -32,8 +31,23 @@ import {
   assertRepositoryRegistration,
   validateSetupConfig,
 } from "./setup.js";
+import { inspectMemory, memoryDependencyHashes } from "./memory.js";
+import { parseTaskData } from "./tasks.js";
 
-const ITERATION_STATUSES = new Set(["open", "done", "cancelled"]);
+function validateDomainMemory(root, add) {
+  const result = inspectMemory(root);
+  for (const error of result.errors) {
+    add("error", error);
+  }
+  for (const warning of result.warnings) {
+    add("warn", warning);
+  }
+  if (!result.errors.length) {
+    add("ok", "项目长期记忆 revision " + result.memory.revision);
+    add("ok", "CONTEXT.md 与 ADR 结构化索引");
+  }
+}
+
 const SLICE_STATUSES = new Set(["pending", "in_progress", "done"]);
 const PHASE_ARTIFACTS = {
   prd: ["prd.md", "decisions.md"],
@@ -94,11 +108,20 @@ function validateSlices(task, label, add) {
   }
   const ids = new Set();
   const dependencies = new Map();
+  const allowedFields = new Set(["id", "title", "status", "blocked_by"]);
   let inProgress = 0;
   for (const slice of task.slices) {
     if (!isObject(slice) || !slice.id || ids.has(slice.id)) {
       add("error", label + " 的 slice ID 缺失或重复");
       continue;
+    }
+    const unsupported = Object.keys(slice).filter((key) => !allowedFields.has(key));
+    if (unsupported.length) {
+      add(
+        "error",
+        label + " 的 slice " + slice.id + " 包含未知字段 " +
+          unsupported.join(", "),
+      );
     }
     ids.add(slice.id);
     if (!slice.title) {
@@ -110,7 +133,7 @@ function validateSlices(task, label, add) {
     if (slice.status === "in_progress") {
       inProgress += 1;
     }
-    if (slice.blocked_by !== undefined && !Array.isArray(slice.blocked_by)) {
+    if (!Array.isArray(slice.blocked_by)) {
       add("error", label + " 的 slice " + slice.id + " blocked_by 必须是数组");
     }
     dependencies.set(slice.id, Array.isArray(slice.blocked_by) ? slice.blocked_by : []);
@@ -118,8 +141,8 @@ function validateSlices(task, label, add) {
   if (inProgress > 1) {
     add("error", label + " 同时有多个 in_progress slice");
   }
-  for (const [id, blockedBy] of dependencies) {
-    for (const dependency of blockedBy) {
+  for (const [id, dependenciesForSlice] of dependencies) {
+    for (const dependency of dependenciesForSlice) {
       if (dependency === id || !ids.has(dependency)) {
         add("error", label + " 的 slice " + id + " 包含无效依赖 " + dependency);
       }
@@ -155,13 +178,13 @@ function validateSlices(task, label, add) {
   }
 }
 
-function validateCheckpoints(taskDirectory, task, label, add) {
+function validateCheckpoints(root, taskDirectory, task, label, add) {
   const requireFresh = task.phase !== "cancelled";
-  if (task.checkpoints !== undefined && !isObject(task.checkpoints)) {
+  if (!isObject(task.checkpoints)) {
     add("error", label + " 的 checkpoints 必须是对象");
     return;
   }
-  for (const [phase, checkpoint] of Object.entries(task.checkpoints || {})) {
+  for (const [phase, checkpoint] of Object.entries(task.checkpoints)) {
     if (!PHASES.includes(phase) || !isObject(checkpoint)) {
       add("error", label + " 含无效 checkpoint: " + phase);
       continue;
@@ -205,22 +228,31 @@ function validateCheckpoints(taskDirectory, task, label, add) {
       )) {
         const currentHash = dependency === "implementation"
           ? task.checkpoints?.implementation?.content_hash
-          : dependencyFiles[dependency]
-            ? fileHash(join(taskDirectory, dependencyFiles[dependency]))
-            : undefined;
+          : dependency === "memory"
+            ? memoryDependencyHashes(
+                (PHASE_ARTIFACTS[phase] || []).map((file) =>
+                  join(taskDirectory, file),
+                ),
+                root,
+              )
+            : dependencyFiles[dependency]
+              ? fileHash(join(taskDirectory, dependencyFiles[dependency]))
+              : undefined;
         if (currentHash === undefined) {
           add("error", label + " 的 " + phase + " 含未知 checkpoint 依赖 " + dependency);
         } else if (currentHash === null && recordedHash !== null) {
           add("error", label + " 的 " + phase + " checkpoint 依赖不存在：" + dependency);
-        } else if (requireFresh && currentHash !== recordedHash) {
+        } else if (
+          requireFresh &&
+          (dependency === "memory"
+            ? fingerprint(currentHash) !== fingerprint(recordedHash)
+            : currentHash !== recordedHash)
+        ) {
           add("error", label + " 的 " + phase + " checkpoint 上游已失效");
         }
       }
     }
-    if (
-      checkpoint.revision !== undefined &&
-      (!validRevision(checkpoint.revision) || checkpoint.revision > task.revision)
-    ) {
+    if (!validRevision(checkpoint.revision) || checkpoint.revision > task.revision) {
       add("error", label + " 的 " + phase + " checkpoint revision 无效");
     }
     const approval = task.approvals?.[phase];
@@ -240,7 +272,7 @@ function validateCheckpoints(taskDirectory, task, label, add) {
       add("error", label + " 的 " + phase + " approval 无效或已失效");
     }
   }
-  if (task.approvals !== undefined && !isObject(task.approvals)) {
+  if (!isObject(task.approvals)) {
     add("error", label + " 的 approvals 必须是对象");
   }
   if (PHASES.includes(task.phase)) {
@@ -258,13 +290,15 @@ function validateCheckpoints(taskDirectory, task, label, add) {
 
 function validateDelivery(task, label, repositories, add) {
   const delivery = task.delivery;
-  if (delivery !== undefined && !isObject(delivery)) {
+  if (!isObject(delivery)) {
     add("error", label + " 的 delivery 必须是对象");
     return;
   }
-  const entries = Array.isArray(delivery?.repositories)
-    ? delivery.repositories
-    : [];
+  if (!Array.isArray(delivery.repositories)) {
+    add("error", label + " 的 delivery.repositories 必须是数组");
+    return;
+  }
+  const entries = delivery.repositories;
   if (task.phase === "done" && task.repositories.length && !entries.length) {
     add("error", label + " 已完成但缺少 delivery.repositories");
   }
@@ -288,9 +322,7 @@ function validateDelivery(task, label, repositories, add) {
     try {
       identity = assertRepositoryRegistration(repo);
       if (!entry.canonical_root) {
-        if (task.phase === "done") {
-          add("error", label + " 的仓库 " + repoId + " 缺少 canonical_root");
-        }
+        add("error", label + " 的仓库 " + repoId + " 缺少 canonical_root");
       } else {
         const recorded = assertRepositoryRegistration({
           id: repoId,
@@ -305,7 +337,8 @@ function validateDelivery(task, label, repositories, add) {
       continue;
     }
     for (const field of ["baseline_head", "final_head"]) {
-      if (task.phase === "done" && !entry[field]) {
+      const required = field === "baseline_head" || task.phase === "done";
+      if (required && !entry[field]) {
         add("error", label + " 的仓库 " + repoId + " 缺少 " + field);
       } else if (
         entry[field] &&
@@ -323,6 +356,9 @@ function validateDelivery(task, label, repositories, add) {
     }
     if (!Array.isArray(entry.initial_dirty_state)) {
       add("error", label + " 的仓库 " + repoId + " 缺少初始脏文件指纹");
+    }
+    if (!entry.captured_at || Number.isNaN(Date.parse(String(entry.captured_at)))) {
+      add("error", label + " 的仓库 " + repoId + " captured_at 无效");
     }
     if (task.phase === "done" && !entry.verification_tree) {
       add("error", label + " 的仓库 " + repoId + " 缺少 verification_tree");
@@ -358,32 +394,13 @@ function validateDelivery(task, label, repositories, add) {
   }
 }
 
-function validateTaskDirectory(directory, repositories, add) {
+function validateTaskDirectory(root, directory, repositories, add) {
   const label = "任务 " + basename(directory);
   let task;
   try {
-    task = readJson(join(directory, "task.json"));
+    task = parseTaskData(readJson(join(directory, "task.json")));
   } catch (error) {
     add("error", label + " 的 task.json 无效: " + error.message);
-    return;
-  }
-  if (!isObject(task) || !task.title || !task.summary) {
-    add("error", label + " 缺少 title 或 summary");
-  }
-  if (task.schema_version !== 2) {
-    add("error", label + " 的 schema_version 不受支持");
-  }
-  if (!validRevision(task.revision)) {
-    add("error", label + " 的 revision 无效");
-  }
-  if (!TASK_TYPES.includes(task.type)) {
-    add("error", label + " 的 type 无效");
-  }
-  if (![...PHASES, "cancelled"].includes(task.phase)) {
-    add("error", label + " 的 phase 无效");
-  }
-  if (!Array.isArray(task.repositories) || !Array.isArray(task.modules)) {
-    add("error", label + " 的 repositories/modules 必须是数组");
     return;
   }
   for (const repoId of task.repositories) {
@@ -397,9 +414,8 @@ function validateTaskDirectory(directory, repositories, add) {
       add("error", label + " 在 " + task.phase + " 阶段缺少有效 " + artifact);
     }
   }
-  task.revision = Number.isInteger(task.revision) ? task.revision : 0;
   validateSlices(task, label, add);
-  validateCheckpoints(directory, task, label, add);
+  validateCheckpoints(root, directory, task, label, add);
   validateDelivery(task, label, repositories, add);
 }
 
@@ -415,6 +431,7 @@ export function runDoctor(options = {}, root = ROOT) {
     ".gitattributes",
     "AGENTS.md",
     "tools/workflow.js",
+    "tools/workflow/memory.js",
     "tools/agent-adapters.json",
     "tools/package.json",
     "standards/logging.md",
@@ -463,6 +480,7 @@ export function runDoctor(options = {}, root = ROOT) {
     existsSync(join(root, "project", "index.md")) ? "ok" : "error",
     "项目索引 project/index.md",
   );
+  validateDomainMemory(root, add);
   if (
     config.permissions?.production_write !== false ||
     config.permissions?.deploy !== false ||
@@ -480,15 +498,6 @@ export function runDoctor(options = {}, root = ROOT) {
     ) {
       add("error", "仓库 " + repo.id + " 配置了生产环境写权限");
     }
-  }
-  const currentVersion = readJson(join(root, "tools", "package.json")).version;
-  const configuredVersion = String(config.workflow_version || "");
-  if (currentVersion.split(".")[0] !== configuredVersion.split(".")[0]) {
-    add("error", "本地配置与工作流主版本不兼容");
-  } else if (currentVersion !== configuredVersion) {
-    add("warn", "本地配置版本为 " + configuredVersion + "，当前为 " + currentVersion);
-  } else {
-    add("ok", "工作流版本 " + currentVersion);
   }
   const repositories = new Map();
   const repositoryPaths = new Set();
@@ -533,23 +542,6 @@ export function runDoctor(options = {}, root = ROOT) {
           definition.display_name + " Skill " + skill,
         );
       }
-      const legacySkills = SKILLS.filter((skill) => {
-        const legacy = legacySkillName(skill);
-        const legacyTarget = join(targetRoot, legacy);
-        const legacySource = join(root, ".agents", "skills", legacy);
-        return (
-          existsSync(legacyTarget) ||
-          linkPointsTo(legacyTarget, legacySource)
-        );
-      });
-      if (legacySkills.length) {
-        add(
-          "error",
-          definition.display_name + " 存在 " + legacySkills.length +
-            " 个旧名称 Skill；先预览 adapter install --agent " + definition.id +
-            "，确认后添加 --replace --apply",
-        );
-      }
       const ignoredEntry = runGit(
         ["check-ignore", "--", relative(root, entry)],
         root,
@@ -567,27 +559,13 @@ export function runDoctor(options = {}, root = ROOT) {
     const iterationId = basename(iteration);
     let iterationJson;
     try {
-      iterationJson = readJson(join(iteration, "iteration.json"));
+      iterationJson = parseIterationData(
+        readJson(join(iteration, "iteration.json")),
+        iteration,
+      );
     } catch (error) {
       add("error", "迭代 " + iterationId + " 的 iteration.json 无效: " + error.message);
       continue;
-    }
-    if (
-      !isObject(iterationJson) ||
-      !iterationJson.title ||
-      !iterationJson.goal ||
-      !ITERATION_STATUSES.has(iterationJson.status)
-    ) {
-      add("error", "迭代 " + iterationId + " 缺少基础字段或 status 无效");
-    }
-    if (iterationJson.schema_version !== 2) {
-      add("error", "迭代 " + iterationId + " 的 schema_version 不受支持");
-    }
-    if (!validRevision(iterationJson.revision)) {
-      add("error", "迭代 " + iterationId + " 的 revision 无效");
-    }
-    if (iterationJson.id !== iterationId) {
-      add("error", "迭代 " + iterationId + " 的稳定 ID 与目录名不一致");
     }
     if (["done", "cancelled"].includes(iterationJson.status)) {
       if (
@@ -609,7 +587,7 @@ export function runDoctor(options = {}, root = ROOT) {
     }
     for (const entry of readdirSync(iteration, { withFileTypes: true })) {
       if (entry.isDirectory() && existsSync(join(iteration, entry.name, "task.json"))) {
-        validateTaskDirectory(join(iteration, entry.name), repositories, add);
+        validateTaskDirectory(root, join(iteration, entry.name), repositories, add);
       }
     }
     try {

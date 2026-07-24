@@ -1,0 +1,6 @@
+interface:
+  display_name: "编写高质量技能"
+  short_description: "创建、改进或诊断触发准确且执行可靠的 Agent Skill"
+  default_prompt: "使用 $writing-great-skills 创建或改进一个高质量 Agent Skill。"
+policy:
+  allow_implicit_invocation: false

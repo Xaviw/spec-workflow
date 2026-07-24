@@ -1,0 +1,4 @@
+interface:
+  display_name: "结构化澄清"
+  short_description: "通过决策树追问澄清需求、方案或重要取舍"
+  default_prompt: "使用 $grilling 围绕我提供的主题持续追问，直到所有分支均已确认或明确阻塞。"

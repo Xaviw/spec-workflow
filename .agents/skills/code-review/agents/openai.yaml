@@ -1,0 +1,4 @@
+interface:
+  display_name: "代码审查"
+  short_description: "按明确范围或当前 Git 变更执行高信号代码审查"
+  default_prompt: "使用 $code-review 审查我指定的范围；未指定时审查当前 Git 变更。"

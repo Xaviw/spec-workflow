@@ -9,6 +9,7 @@ import {
   fingerprint,
   iterationLockPath,
   optionList,
+  parseIterationData,
   readJson,
   readLocalConfig,
   readText,
@@ -22,7 +23,7 @@ import {
   assertRepositoryRegistration,
   inspectRepositoryRoot,
 } from "./setup.js";
-import { validateTask } from "./tasks.js";
+import { parseTaskData, validateTask } from "./tasks.js";
 
 const TASK_ARTIFACTS = [
   "prd.md",
@@ -31,20 +32,22 @@ const TASK_ARTIFACTS = [
   "spec.md",
   "verification.md",
 ];
+const CHANGE_FIELDS = new Set([
+  "schema_version",
+  "id",
+  "timestamp",
+  "summary",
+  "commits",
+  "verification",
+  "project_docs",
+]);
 
 function now() {
   return new Date().toISOString();
 }
 
 function nextIterationRevision(iteration, directory) {
-  if (
-    iteration.schema_version !== 2 ||
-    iteration.id !== basename(directory) ||
-    !Number.isInteger(iteration.revision) ||
-    iteration.revision < 0
-  ) {
-    throw new Error("iteration.json 格式不受支持");
-  }
+  parseIterationData(iteration, directory);
   iteration.revision += 1;
   iteration.updated_at = now();
   return iteration.revision;
@@ -57,39 +60,29 @@ function assertOpenIteration(iteration, action) {
 }
 
 function normalizedDelivery(task) {
-  const repositories = Array.isArray(task.delivery?.repositories)
-    ? task.delivery.repositories
-    : [];
   return {
-    repositories: repositories.map((repo) => ({
-      id: String(repo?.id || ""),
-      canonical_root: repo?.canonical_root || null,
-      branch: repo?.branch || null,
-      baseline_head: repo?.baseline_head || null,
-      initial_dirty_paths: Array.isArray(repo?.initial_dirty_paths)
-        ? repo.initial_dirty_paths.map(String)
+    repositories: task.delivery.repositories.map((repo) => ({
+      id: repo.id,
+      canonical_root: repo.canonical_root,
+      branch: repo.branch,
+      baseline_head: repo.baseline_head,
+      initial_dirty_paths: [...repo.initial_dirty_paths],
+      initial_dirty_state: repo.initial_dirty_state.map((entry) => ({ ...entry })),
+      captured_at: repo.captured_at,
+      verification_tree: repo.verification_tree,
+      commits: [...repo.commits],
+      final_head: repo.final_head,
+      remaining_dirty_paths: repo.remaining_dirty_paths
+        ? [...repo.remaining_dirty_paths]
         : [],
-      initial_dirty_state: Array.isArray(repo?.initial_dirty_state)
-        ? repo.initial_dirty_state.map((entry) => ({ ...entry }))
-        : repo?.initial_dirty_state ?? null,
-      captured_at: repo?.captured_at || null,
-      verification_tree: repo?.verification_tree || null,
-      checks: Array.isArray(repo?.checks) ? repo.checks : [],
-      commits: Array.isArray(repo?.commits)
-        ? repo.commits.map(String).filter(Boolean)
-        : [],
-      final_head: repo?.final_head || null,
-      remaining_dirty_paths: Array.isArray(repo?.remaining_dirty_paths)
-        ? repo.remaining_dirty_paths.map(String)
-        : [],
-      finalized_at: repo?.finalized_at || null,
+      finalized_at: repo.finalized_at || null,
     })),
   };
 }
 
 function artifactHashes(taskDirectory, task) {
   const names = new Set(TASK_ARTIFACTS);
-  for (const checkpoint of Object.values(task.checkpoints || {})) {
+  for (const checkpoint of Object.values(task.checkpoints)) {
     if (checkpoint && typeof checkpoint.artifact === "string") {
       names.add(checkpoint.artifact);
     }
@@ -109,34 +102,24 @@ function artifactHashes(taskDirectory, task) {
 function taskSnapshot(iterationDirectory, entry) {
   const directory = join(iterationDirectory, entry.name);
   const path = join(directory, "task.json");
-  const task = readJson(path);
-  if (
-    task.schema_version !== 2 ||
-    !Number.isInteger(task.revision) ||
-    task.revision < 0
-  ) {
-    throw new Error("任务 " + entry.name + " 的 task.json 格式不受支持");
-  }
+  const task = parseTaskData(readJson(path));
   return {
     id: entry.name,
     schema_version: task.schema_version,
     revision: task.revision,
     task_hash: fileHash(path),
     title: task.title,
-    summary: task.summary || "",
-    type: task.type || null,
+    summary: task.summary,
+    type: task.type,
     phase: task.phase,
-    repositories: Array.isArray(task.repositories) ? task.repositories.map(String) : [],
-    modules: Array.isArray(task.modules) ? task.modules.map(String) : [],
-    related_tasks: Array.isArray(task.related_tasks)
-      ? task.related_tasks.map(String)
-      : [],
+    repositories: [...task.repositories],
+    modules: [...task.modules],
+    related_tasks: [...task.related_tasks],
     artifacts: artifactHashes(directory, task),
-    checkpoints: task.checkpoints || {},
-    approvals: task.approvals || {},
-    slices: Array.isArray(task.slices) ? task.slices : [],
+    checkpoints: task.checkpoints,
+    approvals: task.approvals,
+    slices: task.slices,
     delivery: normalizedDelivery(task),
-    closure_receipt: task.closure_receipt || null,
   };
 }
 
@@ -160,10 +143,33 @@ function readChanges(iteration) {
         typeof change !== "object" ||
         Array.isArray(change) ||
         change.schema_version !== 2 ||
-        !change.id
+        typeof change.id !== "string" ||
+        !change.id ||
+        typeof change.timestamp !== "string" ||
+        Number.isNaN(Date.parse(change.timestamp)) ||
+        typeof change.summary !== "string" ||
+        !change.summary.trim() ||
+        !change.commits ||
+        typeof change.commits !== "object" ||
+        Array.isArray(change.commits) ||
+        !Object.keys(change.commits).length ||
+        Object.values(change.commits).some((commit) => typeof commit !== "string") ||
+        typeof change.verification !== "string" ||
+        !change.verification.trim() ||
+        !Array.isArray(change.project_docs) ||
+        change.project_docs.some((path) => typeof path !== "string")
       ) {
         throw new Error(
           "changes.jsonl 第 " + (index + 1) + " 行格式不受支持",
+        );
+      }
+      const unknownFields = Object.keys(change).filter(
+        (field) => !CHANGE_FIELDS.has(field),
+      );
+      if (unknownFields.length) {
+        throw new Error(
+          "changes.jsonl 第 " + (index + 1) + " 行包含未知字段：" +
+            unknownFields.join(", "),
         );
       }
       return change;
@@ -214,7 +220,10 @@ function releaseIntegrityErrors(tasks, iterationDirectory) {
 }
 
 export function aggregateRelease(iterationDirectory) {
-  const iteration = readJson(join(iterationDirectory, "iteration.json"));
+  const iteration = parseIterationData(
+    readJson(join(iterationDirectory, "iteration.json")),
+    iterationDirectory,
+  );
   const tasks = [];
   for (const entry of readdirSync(iterationDirectory, { withFileTypes: true })) {
     const taskPath = join(iterationDirectory, entry.name, "task.json");
@@ -225,11 +234,10 @@ export function aggregateRelease(iterationDirectory) {
   tasks.sort((left, right) => left.id.localeCompare(right.id));
   const changes = readChanges(iterationDirectory);
   const sourceIteration = {
-    id: iteration.id || basename(iterationDirectory),
+    id: iteration.id,
     title: iteration.title,
     goal: iteration.goal,
-    target_version: iteration.target_version ?? null,
-    source_revision: iteration.source_revision ?? null,
+    target_version: iteration.target_version,
   };
   const sources = { iteration: sourceIteration, tasks, changes };
   return {
@@ -261,7 +269,7 @@ export function collectReleaseCommitReferences(aggregate) {
     }
   }
   for (const change of aggregate.changes) {
-    for (const [repoId, rawCommit] of Object.entries(change.commits || {})) {
+    for (const [repoId, rawCommit] of Object.entries(change.commits)) {
       const sha = String(rawCommit).trim();
       if (sha) {
         references.push({
@@ -433,7 +441,7 @@ export function addChange(options) {
     );
   }
   const iterationPath = join(iteration, "iteration.json");
-  const iterationJson = readJson(iterationPath);
+  const iterationJson = parseIterationData(readJson(iterationPath), iteration);
   assertOpenIteration(iterationJson, "追加简单变更");
   if (!options.summary || !options.verification) {
     throw new Error("change add 需要 --summary、--verification 和至少一个 --commit repo=sha");
@@ -502,7 +510,7 @@ export function writeReleasePlan(reference, options) {
     );
   }
   const iterationPath = join(iteration, "iteration.json");
-  const iterationJson = readJson(iterationPath);
+  const iterationJson = parseIterationData(readJson(iterationPath), iteration);
   assertOpenIteration(iterationJson, "生成发布方案");
   const aggregate = aggregateRelease(iteration);
   const markdown = releasePlanMarkdown(aggregate);
@@ -557,7 +565,7 @@ export function confirmReleasePlan(reference, options) {
     );
   }
   const iterationPath = join(iteration, "iteration.json");
-  const iterationJson = readJson(iterationPath);
+  const iterationJson = parseIterationData(readJson(iterationPath), iteration);
   assertOpenIteration(iterationJson, "确认发布方案");
   const aggregate = aggregateRelease(iteration);
   const planPath = join(iteration, "release-plan.md");
