@@ -17,14 +17,14 @@ description: 对工作流任务执行最终验收验证，整合 code-review、�
 
 ## 流程
 
-1. 运行 `task status <task> --json`，确认任务处于 `verification`、全部 Slice 已完成且 delivery 未漂移；以该 task delivery 为明确范围调用 `code-review`：审查各仓库 `baseline_head -> HEAD/worktree` 中属于本任务的最终变更，排除初始脏文件及已确认的无关修改；任务文档和适用约束作为审查依据。本流程处理门禁，并在修复后按同一范围复审。完成：P0 已解决或证明误报，P1 已解决或由用户明确接受并记录，复审无阻塞。
+1. 运行 `task status <task> --json`，确认任务处于 `verification`，并以 task 的 baseline Git 快照为明确范围调用 `code-review`：审查各仓库 `baseline HEAD -> HEAD/worktree` 中属于本任务的最终变更，排除初始脏文件及已确认的无关修改；任务文档和适用约束作为审查依据。本流程处理门禁，并在修复后按同一范围复审。完成：P0 已解决或证明误报，P1 已解决或由用户明确接受并记录，复审无阻塞。
 2. 逐条执行 `spec.md` 的 AC 验收映射，不以“测试通过”替代业务证据；复用代码审查结论作为静态证据，并按适用范围执行测试、类型、lint、构建、联调、契约、兼容、DDL 静态方案、UI、安全配置、可观测性和配置检查，核对 `project/` 事实、`CONTEXT.md` 和相关 ADR 是否仍与最终实现一致。完成：每个 AC 有真实证据或明确的 failed/unverified/waived 状态，全部适用影响和长期记忆已检查。
-3. 更新 `verification.md`，记录每个仓库最终 branch、HEAD、实施范围和未提交文件；“项目文档同步”用 inline code 列出实际更新、复核后无需更新或尚未解决的 `CONTEXT.md`、具体 ADR、`project/index.md` 和仓库事实路径，证据只保存命令、摘要或路径。运行 `task validate <task>`。完成：文档覆盖全部 AC，校验通过，显式长期记忆依赖仍 fresh 且没有未处置冲突，自动验证之外的行为只列为“待业务自测”。
+3. 创建或更新 `verification.md`，记录每个仓库最终 branch、HEAD、实施范围和未提交文件；“项目文档同步”用 inline code 列出实际更新、复核后无需更新或尚未解决的 `CONTEXT.md`、具体 ADR、`project/index.md` 和仓库事实路径，证据只保存命令、摘要或路径。自行检查文档覆盖全部 AC，项目记忆仍与实现一致且没有未处置冲突；自动验证之外的行为只列为“待业务自测”。
 4. 到此停止并等待用户业务验收，不提交、不进入 `done`。完成：已明确提示用户自测和回复“完成任务”。
 
 ## verification.md
 
-保留 CLI 生成的全部章节。每个 PRD AC 使用独立三级标题：
+每个 PRD AC 使用独立三级标题：
 
 ```markdown
 ### AC-001 <验收项>
@@ -38,12 +38,14 @@ description: 对工作流任务执行最终验收验证，整合 code-review、�
 
 可执行验证完成后使用以下提示：
 
-> 实现及可执行验证已完成，任务当前等待业务验收。请完成业务自测；确认通过后回复“完成任务”，我再将任务标记为 done。
+> 实现及可执行验证已完成，任务当前等待业务验收。请完成业务自测；若发现与本任务相关的缺陷，直接说明现象或调用 `sw-fix-bug` 排查修复，无需新建任务；确认通过后回复“完成任务”，我再将任务标记为 done。
 
 用户明确“完成任务”后，先汇总代码仓库 commit 和工作流文档的一次性提交计划并取得一次授权。按依赖顺序提交各代码仓库，不得 push；随后运行：
 
 ```text
-task phase <task> done --commit <repo-a=sha> --commit <repo-b=sha> --expected-revision <n> --confirmed
+task phase <task> done --confirmed
 ```
 
-同仓多 commit 时按祖先顺序重复 `--commit repo=sha`。让 CLI 校验 commit 是基线严格后代、最后一个等于 HEAD、验证 tree 未漂移，再提交任务 done 记录。
+CLI 自动记录各仓库最终 HEAD、HEAD tree 和剩余脏文件；这些快照用于后续发布方案汇总，不替代本 Skill 对提交范围和验证证据的判断。
+
+标记完成后提示：`任务已完成。若随后发现本次交付遗留缺陷，直接说明现象或调用 sw-fix-bug；它会先确认是否仍关联本任务。`

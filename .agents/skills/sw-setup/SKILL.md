@@ -1,39 +1,47 @@
 ---
 name: sw-setup
-description: 初始化或更新 spec-driven-template 工作流仓库，并在完成后运行 doctor 验证。当前请求需要运行工作流但必要配置缺失、代码仓库映射或 Agent 接入发生变化，或用户要求初始化、更新配置时使用。
+description: 初始化或更新工作流的 Agent 接入、仓库映射和项目事实，并在完成后运行 doctor。当前请求需要运行工作流但必要配置缺失，代码仓库映射或 Agent 接入发生变化，或用户要求初始化、更新配置时使用。
 ---
 
 # 初始化工作流
 
 ## 上下文契约
 
-必读：`AGENTS.md`、`tools/agent-adapters.json`，以及已有的 `AGENTS.local.md`。
+必读：`AGENTS.md` 和已有的 `AGENTS.local.md`。
 
-按需读取：候选代码仓库的 Git 元数据、README、运行时配置文件和已有项目文档。只读取当前正在确认的仓库。
+按需读取：当前 Agent 的入口与 Skills 约定；候选代码仓库的 Git 元数据、README、运行时配置和已有项目文档。一次只探测当前正在确认的仓库。
 
-初始禁止：业务代码、其他任务、全部仓库文档、密钥文件内容。
+初始禁止：业务代码、其他任务、全部仓库文档和密钥文件内容。
 
-输出：`AGENTS.local.md`、根目录 `CONTEXT.md`、`project/memory.json`、`project/index.md`、`project/repositories/*.md`、必要的本地 Agent 适配器，以及 doctor 结果。
+输出：CLI 受管的 `AGENTS.local.md` 配置与 Agent 接入；Skill 维护的 `CONTEXT.md`、`project/index.md`、`project/repositories/*.md` 和本地环境说明；doctor 结果。
+
+## 职责边界
+
+CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skills 路径，以及仓库 ID 到 canonical Git 根目录的映射。CLI 写入入口受管块、Skills 链接和本地 Git 排除规则。
+
+本 Skill 负责理解并写入项目事实：
+
+- 项目名称、目标和仓库角色写入 `CONTEXT.md`、`project/index.md`；
+- 模块、启动命令、默认端口、运行时、环境变量名、配置中心、外部依赖、联调方式、环境列表和切换方式写入 `project/repositories/<repo-id>.md`；
+- 本机命令或端口覆盖、本地可操作环境和远程只读环境写在 `AGENTS.local.md` 的 CLI 受管块之外。
+
+本地事实不能扩大 `AGENTS.md` 的安全授权。任何位置都只记录环境变量名、依赖和获取方式，不记录凭据值。
 
 ## 流程
 
-1. 运行 `node tools/workflow.js setup`。完成：CLI 已加载现有配置并给出待确认项。
-2. 复用已有项目、Agent 和仓库配置，让 CLI 探测可验证事实，只询问无法确定的选择。确认：
-   - 项目名称和目标；
-   - 当前使用的 Agent；
-   - 每个代码仓库的稳定 ID、精确 Git 根目录、角色和主要模块；
-   - 启动命令、启动端口、可选运行时版本；
-   - 环境变量名、配置中心或外部服务依赖；
-   - 联调方式，例如直接改代码或使用 Whistle；
-   - 环境列表、本地可操作范围和切换方式。
-   完成：必要字段都有确认值或 `unknown`。
-3. 校验仓库 ID 为 1-64 位小写 ASCII，只登记 `git rev-parse --show-toplevel` 的根目录；拒绝重复 canonical path、子目录、保留设备名和带凭据的 remote。完成：每个仓库映射唯一且可验证。
-4. 展示一次完整预览，取得确认后写入；首次 setup 使用项目名称和目标创建根 `CONTEXT.md` 及 revision=0 的 `project/memory.json`，已有受管状态则完整保留，再运行 `node tools/workflow.js doctor`。完成：预期文件已生成且 doctor 无阻塞；否则停在 setup/doctor。
+1. 读取已有配置并探测当前 Agent。若 Agent 原生读取根 `AGENTS.md` 或 `.agents/skills`，对应路径不传；否则确认专用的入口文件和 Skills 目录。两个路径不得重叠或指向工作流核心、任务、项目事实和 Git 元数据。CLI 不维护 Agent 名单，无法从当前环境确定时再询问用户。完成：得到 Agent ID 及必要的两个可选相对路径。
+2. 对每个目标仓库运行 Git 根目录检查，确认稳定的小写 ASCII ID。拒绝重复 canonical path、子目录和非 Git 根目录。完成：仓库映射唯一且可验证。
+3. 探测项目事实，只询问无法从仓库或现有文档确定的内容。至少确认项目名称和目标、仓库角色、主要模块、启动方式、配置依赖、联调方式和环境边界；未知事实明确写为未知，不猜测。完成：共享事实与本机事实已经分开。
+4. 使用完整期望配置运行一次 setup；传入 `--agent` 会替换 Agent 接入设置，传入一个或多个 `--repo` 会替换仓库映射：
 
-## Agent 接入
+   ```text
+   node tools/workflow.js setup --agent <id> [--entry-path <path>] [--skills-path <path>] --repo <repo-id>=<git-root> ... --json
+   ```
 
-以 `tools/agent-adapters.json` 为单一映射：原生接入只检查可见性并遵循 `setup_note`；非原生接入先预览适配器，确认后链接，失败时复制。自定义 Agent 由用户提供入口和 Skills 目录。生成内容只留在本仓库并保持 Git 忽略。
+   若目标 Skills 位置已有用户内容，停止并展示冲突；只有用户明确允许覆盖这些精确目标后才添加 `--replace`。完成：CLI 受管配置和接入已同步，不存在部分替换。
+5. 创建或更新 `CONTEXT.md`、`project/index.md`、对应仓库说明，以及 `AGENTS.local.md` 受管块外的本机事实。保留用户已有内容和当前事实，不创建额外状态文件。完成：项目事实可从约定入口发现。
+6. 运行 `node tools/workflow.js doctor --json`。只处理其报告的接入错误；doctor 无 error 后结束。完成：工作流、Agent、Skills 和仓库映射均可用。
 
 ## 安全规则
 
-只记录环境变量名和密钥获取方式；发现疑似值时停止写入并只指出字段。保持生产写入、部署和 DDL 权限关闭；启动服务、克隆或修改目标仓库必须另行确认。
+setup 不启动服务、不克隆或修改目标代码仓库，不授予生产写入、部署或 DDL 执行权限。发现疑似密钥值或来源不明的重叠内容时停止写入，只指出位置和所需决定。

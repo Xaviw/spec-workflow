@@ -1,16 +1,15 @@
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
+import { basename, join } from "node:path";
 
 import {
   ITERATIONS_DIR,
-  ROOT,
-  ensureWithin,
-  fileHash,
-  fingerprint,
+  captureRepositories,
   iterationLockPath,
+  optionList,
   parseIterationData,
-  pathHasCommit,
+  parseTaskData,
   readJson,
+  relativeWorkflowPath,
   resolveIteration,
   slugify,
   today,
@@ -18,175 +17,148 @@ import {
   withFileLocks,
   writeJson,
 } from "./common.js";
-import {
-  aggregateRelease,
-  validateReleaseCommitReferences,
-} from "./release.js";
 
 function now() {
   return new Date().toISOString();
 }
 
-function assertOpenIteration(iteration, action) {
-  if (iteration.status !== "open") {
-    throw new Error(action + "只允许用于开放迭代；done/cancelled 是不可变终态");
-  }
+function readIteration(directory) {
+  return parseIterationData(readJson(join(directory, "iteration.json")));
 }
 
-function nextIterationRevision(iteration, directory) {
-  parseIterationData(iteration, directory);
-  iteration.revision += 1;
-  iteration.updated_at = now();
-  return iteration.revision;
+function assertOpen(iteration, action) {
+  if (iteration.status !== "open") throw new Error(action + "只允许用于开放迭代");
+}
+
+function taskSummaries(directory) {
+  return readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(directory, entry.name, "task.json")))
+    .map((entry) => {
+      const task = parseTaskData(readJson(join(directory, entry.name, "task.json")));
+      return {
+        id: entry.name,
+        path: relativeWorkflowPath(join(directory, entry.name)),
+        title: task.title,
+        phase: task.phase,
+        repositories: task.repositories,
+      };
+    })
+    .sort((left, right) => left.id.localeCompare(right.id));
 }
 
 export function createIteration(options) {
-  if (!options.title || !options.goal) {
-    throw new Error("iteration create 需要 --title 和 --goal");
-  }
+  const title = String(options.title || "").trim();
+  if (!title) throw new Error("iteration title 不能为空");
   mkdirSync(ITERATIONS_DIR, { recursive: true });
-  if (!options.__iterationsLocked) {
-    return withFileLocks([join(ITERATIONS_DIR, ".iterations.lock")], () =>
-      createIteration({ ...options, __iterationsLocked: true }),
+  return withFileLocks([join(ITERATIONS_DIR, ".iterations.lock")], () => {
+    const id = uniqueDirectory(
+      ITERATIONS_DIR,
+      today() + "-" + slugify(options.slug || title, "iteration"),
     );
-  }
-  const baseId = today() + "-" + slugify(options.slug || options.title, "iteration");
-  const id = uniqueDirectory(ITERATIONS_DIR, baseId);
-  const directory = join(ITERATIONS_DIR, id);
-  mkdirSync(directory);
-  writeJson(join(directory, "iteration.json"), {
-    schema_version: 2,
-    id,
-    revision: 0,
-    title: String(options.title),
-    goal: String(options.goal),
-    status: "open",
-    created_at: now(),
-    target_version:
-      options["target-version"] && options["target-version"] !== true
-        ? String(options["target-version"])
-        : null,
+    const directory = join(ITERATIONS_DIR, id);
+    mkdirSync(directory);
+    const iteration = {
+      title,
+      status: "open",
+      created_at: now(),
+      ended_at: null,
+      simple_changes: [],
+    };
+    writeJson(join(directory, "iteration.json"), iteration);
+    return { id, path: relativeWorkflowPath(directory), ...iteration };
   });
-  console.log(relative(ROOT, directory));
 }
 
-export function finishIteration(reference, options) {
-  if (!options.confirmed) {
-    throw new Error("标记迭代完成需要实际发布确认和 --confirmed");
+export function listIterations(options = {}) {
+  if (options.status && !["open", "closed", "cancelled"].includes(String(options.status))) {
+    throw new Error("--status 必须是 open、closed 或 cancelled");
   }
-  const iteration = resolveIteration(reference);
-  if (!options.__iterationLocked) {
-    return withFileLocks([iterationLockPath(iteration)], () =>
-      finishIteration(reference, { ...options, __iterationLocked: true }),
-    );
-  }
-  const iterationJson = parseIterationData(
-    readJson(join(iteration, "iteration.json")),
-    iteration,
-  );
-  assertOpenIteration(iterationJson, "完成迭代");
-  const aggregate = aggregateRelease(iteration);
-  if (aggregate.unfinished.length) {
-    throw new Error("迭代仍有未完成任务");
-  }
-  if (aggregate.integrity_errors.length) {
-    throw new Error("迭代交付记录不完整: " + aggregate.integrity_errors.join("；"));
-  }
-  const commitErrors = validateReleaseCommitReferences(aggregate);
-  if (commitErrors.length) {
-    throw new Error("发布 commit 校验失败: " + commitErrors.join("；"));
-  }
-  const planHash = fileHash(join(iteration, "release-plan.md"));
-  if (
-    iterationJson.release_plan?.status !== "confirmed" ||
-    iterationJson.release_plan.fingerprint !== aggregate.fingerprint ||
-    iterationJson.release_plan.plan_hash !== planHash ||
-    iterationJson.release_plan.confirmation_revision !== iterationJson.revision ||
-    iterationJson.release_plan.confirmation_receipt?.fingerprint !==
-      aggregate.fingerprint ||
-    iterationJson.release_plan.confirmation_receipt?.plan_hash !== planHash ||
-    iterationJson.release_plan.confirmation_receipt?.iteration_revision !==
-      iterationJson.revision
-  ) {
-    throw new Error("发布方案未确认、确认回执已失效或方案内容已变化");
-  }
-  const confirmationRevision = iterationJson.revision;
-  const revision = nextIterationRevision(iterationJson, iteration);
-  iterationJson.status = "done";
-  iterationJson.closed_at = now();
-  iterationJson.closure_receipt = {
-    schema_version: 1,
-    status: "done",
-    revision,
-    confirmation_revision: confirmationRevision,
-    fingerprint: aggregate.fingerprint,
-    plan_hash: planHash,
-    closed_at: iterationJson.closed_at,
+  if (!existsSync(ITERATIONS_DIR)) return [];
+  return readdirSync(ITERATIONS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && existsSync(join(ITERATIONS_DIR, entry.name, "iteration.json")))
+    .map((entry) => ({
+      id: entry.name,
+      path: relativeWorkflowPath(join(ITERATIONS_DIR, entry.name)),
+      ...readIteration(join(ITERATIONS_DIR, entry.name)),
+    }))
+    .filter((iteration) => !options.status || iteration.status === options.status)
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+export function iterationStatus(reference) {
+  const directory = resolveIteration(reference);
+  const iteration = readIteration(directory);
+  const tasks = taskSummaries(directory);
+  return {
+    id: basename(directory),
+    path: relativeWorkflowPath(directory),
+    ...iteration,
+    tasks,
+    counts: Object.fromEntries(
+      ["prd", "technical_design", "implementation_spec", "implementation", "verification", "done", "cancelled"]
+        .map((phase) => [phase, tasks.filter((task) => task.phase === phase).length]),
+    ),
+    release_plan: {
+      exists: existsSync(join(directory, "release-plan.md")),
+      path: relativeWorkflowPath(join(directory, "release-plan.md")),
+    },
   };
-  writeJson(join(iteration, "iteration.json"), iterationJson);
-  console.log("done");
+}
+
+export function closeIteration(reference, options) {
+  if (!options.confirmed) throw new Error("收口迭代需要实际发布确认和 --confirmed");
+  const directory = resolveIteration(reference);
+  return withFileLocks([iterationLockPath(directory)], () => {
+    const iteration = readIteration(directory);
+    assertOpen(iteration, "收口迭代");
+    const unfinished = taskSummaries(directory).filter(
+      (task) => !["done", "cancelled"].includes(task.phase),
+    );
+    if (unfinished.length) throw new Error("迭代仍有未完成任务");
+    if (!existsSync(join(directory, "release-plan.md"))) throw new Error("缺少 release-plan.md");
+    iteration.status = "closed";
+    iteration.ended_at = now();
+    writeJson(join(directory, "iteration.json"), iteration);
+    return iterationStatus(directory);
+  });
 }
 
 export function cancelIteration(reference, options) {
-  if (!options.confirmed || !options.reason || options.reason === true) {
-    throw new Error("取消迭代需要 --reason 和 --confirmed");
-  }
-  const iteration = resolveIteration(reference);
-  if (!options.__iterationLocked) {
-    return withFileLocks([iterationLockPath(iteration)], () =>
-      cancelIteration(reference, { ...options, __iterationLocked: true }),
-    );
-  }
-  const iterationJson = parseIterationData(
-    readJson(join(iteration, "iteration.json")),
-    iteration,
-  );
-  assertOpenIteration(iterationJson, "取消迭代");
-  const aggregate = aggregateRelease(iteration);
-  if (aggregate.done.length || aggregate.unfinished.length || aggregate.changes.length) {
-    throw new Error("包含未取消任务或简单变更的迭代不能直接取消；请先处理交付项");
-  }
-  const revision = nextIterationRevision(iterationJson, iteration);
-  iterationJson.status = "cancelled";
-  iterationJson.closure_reason = String(options.reason);
-  iterationJson.closed_at = now();
-  iterationJson.closure_receipt = {
-    schema_version: 1,
-    status: "cancelled",
-    revision,
-    reason_hash: fingerprint(iterationJson.closure_reason),
-    closed_at: iterationJson.closed_at,
-  };
-  writeJson(join(iteration, "iteration.json"), iterationJson);
-  console.log("cancelled");
+  if (!options.confirmed) throw new Error("取消迭代需要 --confirmed");
+  const directory = resolveIteration(reference);
+  return withFileLocks([iterationLockPath(directory)], () => {
+    const iteration = readIteration(directory);
+    assertOpen(iteration, "取消迭代");
+    const tasks = taskSummaries(directory);
+    if (tasks.some((task) => task.phase !== "cancelled") || iteration.simple_changes.length) {
+      throw new Error("取消迭代前必须取消全部任务，且迭代不能包含 simple change");
+    }
+    iteration.status = "cancelled";
+    iteration.ended_at = now();
+    writeJson(join(directory, "iteration.json"), iteration);
+    return iterationStatus(directory);
+  });
 }
 
-export function deleteIteration(reference, options) {
-  const iteration = resolveIteration(reference);
-  if (options.apply && !options.__iterationLocked) {
-    return withFileLocks([iterationLockPath(iteration)], () =>
-      deleteIteration(reference, { ...options, __iterationLocked: true }),
-    );
+export function addSimpleChange(options) {
+  const summary = String(options.summary || "").trim();
+  if (!options.iteration || !summary) {
+    throw new Error("simple-change iteration 和 summary 不能为空");
   }
-  const iterationJson = parseIterationData(
-    readJson(join(iteration, "iteration.json")),
-    iteration,
-  );
-  assertOpenIteration(iterationJson, "删除迭代");
-  const extra = readdirSync(iteration).filter((name) => name !== "iteration.json");
-  if (
-    iterationJson.release_plan ||
-    extra.length ||
-    pathHasCommit(iteration)
-  ) {
-    throw new Error(
-      "迭代不满足安全删除条件；只允许删除未提交、未生成发布方案且除 iteration.json 外为空的开放迭代",
-    );
-  }
-  console.log((options.apply ? "删除: " : "将删除: ") + relative(ROOT, iteration));
-  if (options.apply) {
-    rmSync(ensureWithin(ITERATIONS_DIR, iteration), { recursive: true, force: false });
-  } else {
-    console.log("确认后添加 --apply。");
-  }
+  const repositories = optionList(options.repositories);
+  if (new Set(repositories).size !== repositories.length) throw new Error("仓库 ID 不能重复");
+  const directory = resolveIteration(String(options.iteration));
+  return withFileLocks([iterationLockPath(directory)], () => {
+    const iteration = readIteration(directory);
+    assertOpen(iteration, "登记 simple change");
+    const change = {
+      summary,
+      repositories,
+      git: captureRepositories(repositories, true),
+      recorded_at: now(),
+    };
+    iteration.simple_changes.push(change);
+    writeJson(join(directory, "iteration.json"), iteration);
+    return change;
+  });
 }

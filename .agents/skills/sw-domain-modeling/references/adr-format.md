@@ -1,6 +1,6 @@
 # ADR 格式与门槛
 
-ADR 位于工作流仓库根目录 `adr/`。文件名使用小写 ASCII kebab-case；标题和正文使用简体中文。编号只能由 `memory adr` 在根级锁内分配。
+ADR 位于根目录 `adr/`。文件名为四位编号加小写 ASCII kebab-case，例如 `0001-server-owned-identity.md`。编号取现有 ADR 最大编号加一；创建前重新扫描，若目标文件已存在则停止。
 
 ## 创建门槛
 
@@ -8,30 +8,34 @@ ADR 位于工作流仓库根目录 `adr/`。文件名使用小写 ASCII kebab-ca
 
 1. **难以逆转**：以后改变会产生明显迁移、兼容、组织或交付成本。
 2. **脱离背景会令人意外**：未来维护者可能把当前做法误判为遗漏或错误。
-3. **存在真实取舍**：确实有合理替代方案，并因具体原因选择了其中之一。
+3. **存在真实取舍**：确实有合理替代方案，并因具体原因选择其中之一。
 
-容易回退、显而易见或没有替代方案的决定留在任务 `decisions.md`，不创建 ADR。
+容易回退、显而易见或没有替代方案的决定留在任务 `decisions.md`。
 
-## CLI 配置
+## 正文
 
-```json
-{
-  "title": "简短决定标题",
-  "slug": "ascii-kebab-case",
-  "scope": "project | repo-id/module[, ...]",
-  "summary": "索引中的一句话决定摘要",
-  "body": "一到三句话说明背景、决定和原因。",
-  "source_task": "iterations/.../task-id",
-  "supersedes": "ADR-0001"
-}
+```markdown
+# ADR-0001 {标题}
+
+状态：accepted
+范围：project | repo-id/module[, ...]
+摘要：{索引使用的一句话决定}
+
+## 背景
+
+{为什么现在必须决定。}
+
+## 决定
+
+{选择了什么及原因。}
+
+## 备选方案
+
+{实际考虑过的合理替代。}
+
+## 后果
+
+{收益、代价和后续约束。}
 ```
 
-`source_task` 和 `supersedes` 可省略。多数 ADR 只需这些内容；确有价值时才在 `body` 增加考虑过的方案和后果。
-
-## 生命周期
-
-- 新决定取得用户明确确认后由 `memory adr` 写为 `accepted`。
-- 决定变化时在新配置中写 `supersedes`，由 CLI 保留旧 ADR 并同步双方状态。
-- 约束消失但没有替代决定时，通过 `memory deprecate` 的 `{ "id", "reason" }` 配置弃用。
-- CLI 同一次受管写入更新 `project/memory.json`、ADR 和根 `CONTEXT.md` 索引。
-- 范围只用于选择何时读取；所有 ADR 仍是一个逻辑项目共享的长期记忆。
+被新 ADR 替代时，将旧状态改为 `superseded by ADR-NNNN`；约束消失时改为 `deprecated` 并在正文追加理由。同步更新 `CONTEXT.md` 索引，但不删除历史 ADR。

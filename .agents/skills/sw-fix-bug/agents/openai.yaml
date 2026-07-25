@@ -1,0 +1,4 @@
+interface:
+  display_name: "修复 Bug"
+  short_description: "关联既有任务或独立定位根因、完成最小修复并验证现有行为"
+  default_prompt: "使用 $sw-fix-bug 排查并修复我报告的现有行为缺陷。"

@@ -7,21 +7,23 @@ description: 执行已确认不需要完整任务文档的局部代码或文档�
 
 ## 上下文契约
 
-必读：`AGENTS.md`、`AGENTS.local.md`、用户请求、目标仓库文档。
+必读：`AGENTS.md`、`AGENTS.local.md`、`CONTEXT.md`、`project/index.md`、用户请求、目标仓库文档。
 
 按需读取：相关任务（若用户选择同步）、目标模块代码、测试、`project/repositories/<repo-id>.md`、`AGENTS.md` 规范路由命中的文档，以及 `CONTEXT.md` 索引命中的 ADR。
 
 初始禁止：无关任务、全部项目知识、其他仓库源码、`verification.md` 工作流模板。
 
-输出：最小代码修改、相关验证结果、code-review 结论，以及经确认后的提交和 `changes.jsonl` 记录。
+输出：最小代码修改、相关验证结果、code-review 结论，以及经确认后的提交和 iteration simple change 记录。
 
 ## 流程
 
-1. 确认目标仓库、局部范围、验证方式和记录变更的开放迭代，并按 `AGENTS.md` 读取直接相关规范；多个迭代时让用户选择。完成：仍满足简单任务全部硬门禁，否则转工作流任务。
+1. 确认目标仓库、局部范围、验证方式和记录变更的开放迭代；可稳定自动验证的代码行为默认采用 TDD，用户可明确改为测试后补或替代验证。按 `AGENTS.md` 读取直接相关规范；多个迭代时让用户选择。完成：仍满足简单任务全部硬门禁，否则转工作流任务。
 2. 记录 branch、HEAD 和脏文件；重叠修改交由用户决定，不重叠修改经确认后排除。完成：提交与审查基线明确。
-3. 复用目标仓库现有模式和专业术语完成最小修改，并即时同步 `project/index.md` 或对应 `project/repositories/<repo-id>.md` 中失真的当前事实。形成需要 ADR 的关键决定时停止简单流程，转为工作流任务；仅需澄清已有项目概念时可调用 `sw-domain-modeling`。可隔离的新逻辑和 Bug 优先先写失败测试；纯 UI 或无测试接缝的遗留代码使用最小替代验证。完成：修改和直接相关验证通过，任务仍满足简单变更门禁。
+3. 复用目标仓库已有模式和专业术语完成最小修改，并即时同步 `project/index.md` 或对应 `project/repositories/<repo-id>.md` 中失真的当前事实。形成需要 ADR 的关键决定时停止简单流程，转为工作流任务；仅需澄清已有项目概念时可调用 `sw-domain-modeling`。采用 TDD 时在公开测试接缝完成一个行为的有效 red，再写使其 green 的最小实现；纯 UI、复杂交互或无稳定测试接缝的遗留代码可按已确认方式测试后补或执行最小替代验证。完成：修改和直接相关验证通过，任务仍满足简单变更门禁。
 4. 以用户确认的文件或模块及步骤 2 记录的 `HEAD -> worktree` 为明确范围调用 `code-review`，排除初始脏文件和已确认的无关修改；把 `CONTEXT.md` 中命中 repo/module 的 ADR、相关仓库事实、用户请求和适用约束作为审查依据。本流程处理阻塞项，并在修复后按同一范围复审。完成：P0 已解决或证明误报，P1 已解决或由用户明确接受并写入本次变更验证摘要；自动验证无法覆盖时只列出必要的业务确认。
-5. 汇总一次提交计划并取得一次确认；不得 push 或 merge。完成：代码提交成功后，`change add` 已把摘要、真实 commit、验证和项目文档追加到所选迭代的 `changes.jsonl`，工作流记录已提交。
+5. 汇总一次提交计划并取得一次确认；不得 push 或 merge。代码提交成功后运行 `simple-change add --iteration <id> --summary <text> --repositories <repo-id,...>`，由 CLI 自动记录各仓库最终 HEAD、tree、剩余脏文件和时间。完成：所选 iteration 的 `simple_changes` 已包含最小交付记录，工作流记录已提交。
+
+交付结果时提示：`若后续自测发现现有行为缺陷，直接说明现象或调用 sw-fix-bug 排查修复。`
 
 ## 审查处置
 

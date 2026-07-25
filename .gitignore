@@ -1,8 +1,7 @@
-# 本地设置和生成的 Agent 适配器
+# 本地设置；Agent 适配器由 setup 写入 .git/info/exclude
 AGENTS.local.md
-CLAUDE.md
-.claude
-.spec-workflow-memory.lock
+.spec-workflow.setup.lock
+iterations/.*.iteration.lock
 
 # 常见本地文件
 .DS_Store
