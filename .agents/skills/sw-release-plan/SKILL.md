@@ -1,15 +1,15 @@
 ---
 name: sw-release-plan
-description: 汇总一个迭代中已完成任务和 simple changes，创建、评审发布方案，并在用户确认实际发布完成后收口迭代。迭代准备发布、需要版本变更清单、生产变更交接、发布方案评审或发布后收口时使用；不用于执行部署、DDL 或具体运维操作。
+description: 汇总一个迭代中已完成任务和简单变更记录，创建、评审发布方案，并在用户确认实际发布完成后收口迭代。迭代准备发布、需要版本变更清单、生产变更交接、发布方案评审或发布后收口时使用；不用于执行部署、DDL 或具体运维操作。
 ---
 
 # 生成迭代发布变更方案
 
 ## 上下文契约
 
-必读：`node tools/workflow.js iteration status <iteration> --json` 的结果、已有 `release-plan.md`（若存在）、`references/release-plan-template.md` 和 `references/release-plan-guide.md`。
+必读：`node tools/workflow.js iteration status <iteration> --json` 的结果。
 
-按需读取：done 任务的 `verification.md`、`technical-design.md`、`spec.md`、Git 快照、DDL artifact 和相关仓库说明。只有当前章节缺少发布结论时才扩展，并优先读取验证记录。
+按需读取：生成或评审方案时读取已有 `release-plan.md`（若存在）、[发布方案模板](references/release-plan-template.md)和[发布方案写作参考](references/release-plan-guide.md)；当前章节缺少发布结论时，再读取 done 任务的 `verification.md`、`technical-design.md`、`spec.md`、Git 快照、DDL artifact 和相关仓库说明，并优先读取验证记录。仅收口迭代时不加载模板、写作参考和任务正文。
 
 初始禁止：其他迭代、未完成任务正文、全部项目知识、目标仓库全量历史、生产凭据和正式环境写操作。
 
@@ -24,10 +24,10 @@ description: 汇总一个迭代中已完成任务和 simple changes，创建、�
 
 ## 流程
 
-1. 要求用户明确指定迭代，运行 `iteration status <iteration> --json`。汇总 done 任务和 `simple_changes`，排除 cancelled 任务，并单独列出仍未完成的任务。完成：发布来源、Git 快照和阻塞状态已知。
-2. 已有方案时在其上更新；不存在时按模板创建 `release-plan.md`。按业务能力和真实依赖组织发布概况、风险与依赖、变更内容、发布编排与验证、回滚以及外部补充，不按任务顺序机械拼接。完成：每项结论都能追溯到迭代状态或按需证据。
-3. 缺少结论时只读取对应任务的验证或设计材料。任务间冲突能由已确认事实解决时统一，否则保留冲突并请用户决定；不为补齐文档扩大到生产环境取证。完成：没有猜测、占位文本或隐含阻塞。
-4. 按 [发布变更方案写作参考](references/release-plan-guide.md) 完成正确性、协作验证、风险恢复三轮评审，并让用户确认当前方案。确认结果只存在于对话和文档，不写 fingerprint、hash、receipt 或额外状态。完成：方案具备交接条件，未完成任务仍明确阻止收口。
-5. 只有用户明确说明实际发布已经完成，且 `iteration status` 显示全部任务为 done/cancelled 时，运行 `iteration close <iteration> --confirmed`。CLI 只检查终态任务和 `release-plan.md` 存在。完成：iteration 状态为 closed。
+1. 先确定本次只执行“生成或更新”“评审”或“发布后收口”中的用户当前分支。采用用户明确指定或调用方唯一传入的迭代；仍无法唯一确定时才询问。运行 `iteration status <iteration> --json`，汇总 done 任务和 `simple_changes`，排除 cancelled 任务，并单独列出仍未完成的任务。完成：当前分支、发布来源、Git 快照和阻塞状态已知。
+2. 生成、更新或评审方案时，读取模板、写作参考和已有方案。已有方案时在其上更新；不存在且当前分支需要写入时创建 `release-plan.md`。按业务能力和真实依赖组织发布概况、风险与依赖、变更内容、发布编排与验证、回滚以及外部补充，不按任务顺序机械拼接。完成：每项结论都能追溯到迭代状态或按需证据。
+3. 缺少结论时只读取对应任务的验证或设计材料。任务间冲突能由已确认事实解决时统一，否则保留冲突并请用户决定；不为补齐文档扩大到生产环境取证。按写作参考完成正确性、协作验证、风险恢复三轮评审。完成：方案没有猜测、占位文本或隐含阻塞。
+4. 展示方案、未解决阻塞和拟提交的工作流文件，明确说明本次确认是否同时授权提交；仅评审分支保持只读并到此停止。生成或更新分支取得合并确认后，再核对差异没有混入其他修改并提交 `release-plan.md`。确认结果只存在于对话和文档，不写 fingerprint、hash、receipt 或额外状态。完成：方案具备交接条件，已按明确授权提交或保持只读，未完成任务仍阻止收口。
+5. 发布后收口分支不执行步骤 2-4。用户明确说明实际发布已经完成但没有授权提交时，先展示 iteration 状态变更和提交范围，一次询问是否收口并提交记录。取得合并确认且 `iteration status` 显示全部任务为 done/cancelled 后，运行 `iteration close <iteration> --confirmed`，再提交本次 iteration 状态变更；该确认不授权任何部署或生产写入。CLI 只检查终态任务和 `release-plan.md` 存在。完成：iteration 状态为 closed，工作流记录已提交。
 
-每次调用只执行用户当前要求的生成、评审或收口分支。正式发布仍由外部发布流程执行。
+正式发布仍由外部发布流程执行。

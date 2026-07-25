@@ -7,9 +7,9 @@ description: 按已确认 spec.md 在一个或多个目标 Git 仓库中实施�
 
 ## 上下文契约
 
-必读：`task.json`、`spec.md`、涉及仓库的说明和目标文件。
+必读：`task.json`、`spec.md` 和 `task status <task> --json` 输出。
 
-按需读取：`prd.md`、`technical-design.md` 的被引用章节、相关测试、DDL artifact，以及 `AGENTS.md` 规范路由命中或 spec 就地引用的文档。
+按需读取：执行当前步骤时涉及的仓库说明、目标文件和相关测试；`prd.md`、`technical-design.md` 的被引用章节、DDL artifact，以及 `AGENTS.md` 规范路由命中或 `spec.md` 就地引用的文档。
 
 初始禁止：其他任务、全部设计文档、无关仓库、未被 spec 引用的研究材料。
 

@@ -1,15 +1,15 @@
 ---
 name: sw-technical-design
-description: 为单个工作流 task 编写可追踪、可引用内部材料的技术方案，或将一个迭代内多个 task 方案去重合并为可直接对外评审的单文件总方案。任务处于 technical_design、需求或技术事实变化、用户要求编写或评审技术方案、汇总迭代方案时使用。
+description: 为单个工作流任务编写或评审可追踪、可引用内部材料的技术方案，或将一个迭代内多个任务方案去重合并为可直接对外评审的单文件总方案。任务处于 technical_design、需求或技术事实变化，或用户要求编写、评审、汇总技术方案时使用。
 ---
 
 # 编写技术方案
 
 ## 上下文契约
 
-必读：单任务读取 `task.json`、已确认的 `prd.md`、`decisions.md`、`references/task-technical-design-template.md`、`references/technical-design-guide.md` 和涉及仓库的说明文档。
+必读：单任务读取 `task.json`、已确认的 `prd.md`、`decisions.md`、[单任务技术方案模板](references/task-technical-design-template.md)、[技术方案写作参考](references/technical-design-guide.md)和涉及仓库的说明文档。
 
-迭代汇总必读：`iteration.json`、迭代内未取消任务的 `task.json`、已有 `technical-design.md`、`references/technical-design-template.md` 和 `references/technical-design-guide.md`。
+迭代汇总必读：`iteration.json`、迭代内未取消任务的 `task.json`、已有 `technical-design.md`、[迭代技术方案模板](references/technical-design-template.md)和[技术方案写作参考](references/technical-design-guide.md)。
 
 按需读取：单任务涉及的规范、源码、测试、配置和项目知识；迭代汇总只有在已有方案存在缺口或冲突时，才读取对应任务的 `prd.md` 和 `decisions.md`。每次扩展上下文都服务于一个明确的设计问题。
 
@@ -19,7 +19,7 @@ description: 为单个工作流 task 编写可追踪、可引用内部材料的�
 
 ## 输出边界
 
-### 单 task
+### 单任务
 
 - 将 `technical-design.md` 写成工作流内部、可追踪的设计文档。允许引用 `prd.md`、`decisions.md`、ADR、项目事实、调研或 DDL artifact，并允许用 repo ID、仓库根相对路径和符号定位代码证据；行号容易漂移，仅在确有必要时使用。
 - 引用用于避免重复背景和证明当前事实，不能代替目标设计。接口、字段、数据结构、关键规则、权限、异常、发布和验证结论仍写在本文件中。
@@ -38,7 +38,7 @@ description: 为单个工作流 task 编写可追踪、可引用内部材料的�
 
 1. 运行 `task status <task> --json`，确认 phase 为 `technical_design`，读取已获用户确认的 PRD、仓库范围和全部验收项。
 2. 围绕需求差异扫描实际入口、调用链、数据模型、复用点、信任边界和已有决定。只读取足以确认当前行为、约束和目标设计的证据；区分当前状态与目标状态。
-3. 按单 task 模板建立文档，并按写作参考完成命中的章节。保留全部 H2；H3 没有可靠内容时可以删除或留空。背景、目标和已确认决定优先引用上游文档，不重复转述。
+3. 按单任务模板建立文档，并按写作参考完成命中的章节。保留全部 H2；H3 没有可靠内容时可以删除或留空。背景、目标和已确认决定优先引用上游文档，不重复转述。
 4. 检查接口、字段、状态、权限、异常、发布和验证是否前后一致。必须由用户选择且阻塞设计的取舍调用 `grilling`，并提供访谈主题、已知事实、待决范围和以全部 AC 获得一致设计落点为完成标准；形成新术语或达到 ADR 门槛的决定调用 `sw-domain-modeling`。
 5. 更新唯一的 `technical-design.md`，完成 AC 映射和实际依赖引用后，自行检查设计一致性、验收覆盖和阻塞项。等待用户明确确认后，进入 `implementation_spec` 并调用 `sw-spec`。
 
@@ -46,11 +46,11 @@ description: 为单个工作流 task 编写可追踪、可引用内部材料的�
 
 ## 迭代汇总流程
 
-1. 要求用户明确指定迭代。读取迭代元数据、全部未取消任务的元数据和已有技术方案；任务没有可靠技术方案时不补造内容。
+1. 采用用户明确指定或当前请求唯一选定的迭代；仍无法唯一确定时才询问。读取迭代元数据、全部未取消任务的元数据和已有技术方案；任务没有可靠技术方案时不补造内容。
 2. 在已有总方案上更新；不存在时按迭代汇总模板创建。标题使用可读的迭代名称，不暴露内部 ID 或来源路径。
 3. 按业务能力和技术章节重新组织，不按 task 顺序拼接。合并共同背景、流程、架构、接口、数据、安全、发布和风险，统一同一字段、状态、协议和术语。
 4. 删除重复内容。方案间冲突能由已确认事实解决时统一，否则调用 `grilling`；不得静默选择。
-5. 将所有必要内容写入一个总方案文件，完全空白的 H2 和 H3 可以省略。不要修改 task 阶段或单 task 方案；在回复中报告已纳入、缺少方案和被排除的 task，不把内部清单写进总方案。
+5. 将所有必要内容写入一个总方案文件，完全空白的 H2 和 H3 可以省略。不要修改任务阶段或单任务方案；在回复中报告已纳入、缺少方案和被排除的任务，不把内部清单写进总方案。
 
 ## 评审与写法
 

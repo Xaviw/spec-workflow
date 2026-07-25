@@ -9,7 +9,7 @@
 3. 仅当当前请求需要运行工作流且必要配置缺失，或用户要求初始化、更新配置时，调用 `sw-setup`；工作流命令失败或需要核验安装、配置及 Agent 接入时，调用 `sw-doctor`。两者的 CLI 均由 Agent 执行，不要求用户手动调用；setup 只询问 Agent 无法探测的必要信息。
 4. Node.js 最低版本为 22.12.0。统一 CLI 入口是 `node tools/workflow.js`。
 5. 若 Agent 不支持原生 Skill 调用，直接读取对应 `.agents/skills/<name>/SKILL.md` 并遵循其中流程。
-6. 按最小上下文启动：Skill 默认只读取本文件、当前请求和自身 `SKILL.md`，再按其上下文契约扩展；显式带 task 调用时再提供 `AGENTS.local.md`、根目录 `CONTEXT.md`、`project/index.md`、任务要求的文档及其引用的项目记忆。Skill 明确调用其他 Skill 时才读取对方的 `SKILL.md`。
+6. 按最小上下文启动：Skill 默认只读取本文件、当前请求和自身 `SKILL.md`，再按其上下文契约扩展。显式带 task 调用时先读取 `task status <task> --json` 和当前阶段必需产物；`AGENTS.local.md`、`CONTEXT.md`、`project/index.md`、仓库说明、其他阶段文档及其引用仍按 Skill 的条件加载。Skill 明确调用其他 Skill 时才读取对方的 `SKILL.md`。
 7. 不得在启动时批量读取其他任务、全部迭代、全部规范、全部 Skill 或全部目标仓库；仅在当前已加载 Skill 的“按需读取”条件命中时扩展上下文。
 
 `tools` 从 `.agents/skills/*/SKILL.md` 动态发现全部 Skill，不按名称或前缀分类。依赖、调用条件和是否仅允许用户调用由各 Skill 自身声明。
@@ -40,7 +40,7 @@
 
 ## 项目长期记忆
 
-- 根目录 `CONTEXT.md` 是项目级必读入口，只保存项目简介、已确认的专业术语和关键决策索引。使用其中的规范名称，不得漂移到明确列出的避免用语。
+- 根目录 `CONTEXT.md` 是项目长期记忆入口，只保存项目简介、已确认的专业术语和关键决策索引。需要项目语义的 Skill 先读取该入口；使用其中的规范名称，不得漂移到明确列出的避免用语。
 - `CONTEXT.md` 的关键决策索引包含状态、范围和决定摘要；只读取与当前项目、仓库或模块范围相关的根目录 `adr/*.md`，不得批量加载全部 ADR。
 - `project/index.md` 保存项目级当前事实和仓库导航；仓库事实写入按任务自动加载的 `project/repositories/<repo-id>.md`。不创建无法从这两个入口发现的知识文件。
 - 用户要求澄清或记录项目概念、更新长期记忆、创建 ADR，或工作中形成新的专业术语或难以逆转的真实取舍时，调用 `sw-domain-modeling`。该 Skill 直接维护 `CONTEXT.md` 和根目录 `adr/*.md`，编号通过检查现有 ADR 分配，历史与并发冲突交给 Git。
