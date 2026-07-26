@@ -33,7 +33,7 @@ function help() {
     "doctor [--json]",
     "iteration create --title <title> [--slug <slug>] [--json]",
     "iteration list [--status open|closed|cancelled] [--json]",
-    "iteration status <iteration> [--json]",
+    "iteration status <iteration> [--check] [--json]",
     "iteration close <iteration> --confirmed [--json]",
     "iteration cancel <iteration> --confirmed [--json]",
     "task create --iteration <id> --title <title> [--repositories <ids>] [--json]",
@@ -109,9 +109,9 @@ async function main(argv) {
     return;
   }
   if (group === "iteration" && action === "status") {
-    assertArity(positionals, 3, "iteration status <iteration>");
-    assertOptions(options, []);
-    printResult(iterationStatus(reference), json);
+    assertArity(positionals, 3, "iteration status <iteration> [--check]");
+    assertOptions(options, ["check"]);
+    printResult(iterationStatus(reference, options), json);
     return;
   }
   if (group === "iteration" && action === "close") {

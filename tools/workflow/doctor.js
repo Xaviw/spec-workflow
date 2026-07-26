@@ -36,7 +36,7 @@ export function runDoctor() {
     "runtime.node",
     nodeVersionAtLeast(process.versions.node, "22.12.0") ? "ok" : "error",
     "Node.js " + process.versions.node,
-    "使用 mise 安装 Node.js 22.12.0 或更高版本",
+    "安装 Node.js 22.12.0 或更高版本，并确保 node 可执行文件位于 PATH",
   );
   add(
     "workflow.git",

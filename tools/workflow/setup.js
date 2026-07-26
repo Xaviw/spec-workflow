@@ -14,6 +14,7 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   LOCAL_CONFIG_FILE,
   ROOT,
+  SETUP_LOCK_FILE,
   discoverSkills,
   extractManagedJson,
   isSymbolicLink,
@@ -36,6 +37,10 @@ export const ENTRY_END = "<!-- spec-driven:agent-entry:end -->";
 export const ENTRY_CONTENT = "请读取并遵循根目录 `AGENTS.md`。";
 export const EXCLUDE_START = "# spec-driven:agent-adapter:start";
 export const EXCLUDE_END = "# spec-driven:agent-adapter:end";
+
+function displayPath(path) {
+  return relative(ROOT, path).replaceAll("\\", "/");
+}
 
 function pathExists(path) {
   try {
@@ -92,7 +97,12 @@ function desiredConfig(options, existing) {
     ? parseRepositoryOptions(repositoryOptions)
     : existing?.repositories;
   if (!repositories) throw new Error("首次 setup 至少需要一个 --repo <id>=<path>");
-  return parseSetupConfig({ schema_version: 1, agent, repositories });
+  return parseSetupConfig({
+    schema_version: 1,
+    agent,
+    repositories,
+    task_bindings: existing?.task_bindings || [],
+  });
 }
 
 function validateTextBlock(path, body, start, end) {
@@ -132,7 +142,7 @@ function preflight(previous, desired, replace) {
   if (oldPaths.entry) validateTextBlock(oldPaths.entry, null, ENTRY_START, ENTRY_END);
   if (newPaths.entry) validateTextBlock(newPaths.entry, ENTRY_CONTENT, ENTRY_START, ENTRY_END);
   if (newPaths.skills && pathExists(newPaths.skills) && !lstatSync(newPaths.skills).isDirectory()) {
-    throw new Error("Skills 目标不是目录: " + relative(ROOT, newPaths.skills));
+    throw new Error("Skills 目标不是目录: " + displayPath(newPaths.skills));
   }
   const sourceRoot = join(ROOT, ".agents", "skills");
   const conflicts = newPaths.skills
@@ -144,7 +154,7 @@ function preflight(previous, desired, replace) {
   if (conflicts.length && !replace) {
     throw new Error(
       "Agent Skills 目标存在用户内容，明确授权后使用 --replace: " +
-        conflicts.map((name) => relative(ROOT, join(newPaths.skills, name))).join(", "),
+        conflicts.map((name) => displayPath(join(newPaths.skills, name))).join(", "),
     );
   }
   const localBase = readText(
@@ -163,11 +173,13 @@ function mutation() {
     write(path, content) {
       const existed = pathExists(path);
       const before = existed ? readText(path) : null;
+      if (before === content) return "unchanged";
       writeText(path, content);
       undo.push(() => existed ? writeText(path, before) : rmSync(path, { force: true, recursive: true }));
+      return existed ? "updated" : "created";
     },
     remove(path) {
-      if (!pathExists(path)) return;
+      if (!pathExists(path)) return "unchanged";
       const backup = join(dirname(path), `.spec-workflow-setup-${randomUUID()}.bak`);
       renameSync(path, backup);
       backups.push(backup);
@@ -175,6 +187,7 @@ function mutation() {
         rmSync(path, { force: true, recursive: true });
         renameSync(backup, path);
       });
+      return "removed";
     },
     mkdir(path) {
       if (pathExists(path)) return;
@@ -208,15 +221,16 @@ function mutation() {
 function removePreviousIntegration(plan, actions, changes) {
   if (plan.oldPaths.entry && plan.oldPaths.entry !== plan.newPaths.entry) {
     const remaining = removeTextBlock(readText(plan.oldPaths.entry), ENTRY_START, ENTRY_END);
-    if (remaining.trim()) changes.write(plan.oldPaths.entry, remaining);
-    else changes.remove(plan.oldPaths.entry);
-    actions.push({ action: "remove-entry", path: relative(ROOT, plan.oldPaths.entry) });
+    const action = remaining.trim()
+      ? changes.write(plan.oldPaths.entry, remaining)
+      : changes.remove(plan.oldPaths.entry);
+    actions.push({ action, path: displayPath(plan.oldPaths.entry) });
   }
   if (plan.oldPaths.skills && plan.oldPaths.skills !== plan.newPaths.skills) {
     const sourceRoot = join(ROOT, ".agents", "skills");
     for (const name of managedSkillLinks(plan.oldPaths.skills, sourceRoot)) {
-      changes.remove(join(plan.oldPaths.skills, name));
-      actions.push({ action: "remove-skill-link", path: relative(ROOT, join(plan.oldPaths.skills, name)) });
+      const target = join(plan.oldPaths.skills, name);
+      actions.push({ action: changes.remove(target), path: displayPath(target) });
     }
   }
 }
@@ -225,27 +239,27 @@ function applyCurrentIntegration(config, plan, actions, changes) {
   if (plan.newPaths.entry) {
     const before = readText(plan.newPaths.entry);
     const after = replaceTextBlock(before, ENTRY_CONTENT, ENTRY_START, ENTRY_END);
-    if (after !== before) changes.write(plan.newPaths.entry, after);
-    actions.push({ action: after === before ? "ok" : "write-entry", path: relative(ROOT, plan.newPaths.entry) });
+    actions.push({ action: changes.write(plan.newPaths.entry, after), path: displayPath(plan.newPaths.entry) });
   }
   if (!plan.newPaths.skills) return;
   changes.mkdir(plan.newPaths.skills);
   const sourceRoot = join(ROOT, ".agents", "skills");
   const skills = discoverSkills();
   for (const stale of managedSkillLinks(plan.newPaths.skills, sourceRoot).filter((name) => !skills.includes(name))) {
-    changes.remove(join(plan.newPaths.skills, stale));
-    actions.push({ action: "remove-skill-link", path: relative(ROOT, join(plan.newPaths.skills, stale)) });
+    const target = join(plan.newPaths.skills, stale);
+    actions.push({ action: changes.remove(target), path: displayPath(target) });
   }
   for (const name of skills) {
     const source = join(sourceRoot, name);
     const target = join(plan.newPaths.skills, name);
     if (linkPointsTo(target, source)) {
-      actions.push({ action: "ok", path: relative(ROOT, target) });
+      actions.push({ action: "unchanged", path: displayPath(target) });
       continue;
     }
-    if (pathExists(target)) changes.remove(target);
+    const existed = pathExists(target);
+    if (existed) changes.remove(target);
     changes.link(source, target);
-    actions.push({ action: "link-skill", path: relative(ROOT, target) });
+    actions.push({ action: existed ? "updated" : "created", path: displayPath(target) });
   }
 }
 
@@ -260,7 +274,7 @@ export function expectedExcludePatterns(config, skills) {
 }
 
 export function runSetup(options) {
-  return withFileLocks([join(ROOT, ".spec-workflow.setup.lock")], () => {
+  return withFileLocks([SETUP_LOCK_FILE], () => {
     let existing = null;
     try {
       existing = readLocalConfig();
@@ -274,8 +288,8 @@ export function runSetup(options) {
     try {
       removePreviousIntegration(plan, actions, changes);
       applyCurrentIntegration(config, plan, actions, changes);
-      changes.write(LOCAL_CONFIG_FILE, plan.localContent);
-      changes.write(plan.exclude.path, plan.exclude.content);
+      actions.push({ action: changes.write(LOCAL_CONFIG_FILE, plan.localContent), path: displayPath(LOCAL_CONFIG_FILE) });
+      actions.push({ action: changes.write(plan.exclude.path, plan.exclude.content), path: ".git/info/exclude" });
     } catch (error) {
       try {
         changes.rollback();

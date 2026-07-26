@@ -9,16 +9,18 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 
 import {
   extractManagedJson,
   findSecretPaths,
+  assertPortableWorkflowText,
   parseCliArgs,
   parseIterationData,
   parseTaskData,
@@ -51,7 +53,7 @@ function initializeGit(directory) {
 
 function createRepository(directory) {
   initializeGit(directory);
-  writeFileSync(join(directory, "README.md"), "# Repository\n", "utf8");
+  writeFileSync(join(directory, "README.md"), `# ${basename(directory)}\n`, "utf8");
   git(directory, "add", "README.md");
   git(directory, "commit", "-m", "init");
 }
@@ -111,6 +113,16 @@ test("CLI 参数、受管块和密钥检查保持最小且严格", () => {
   });
   assert.deepEqual(findSecretPaths({ token: "actual-value" }), ["token"]);
   assert.deepEqual(findSecretPaths({ env_var_names: ["API_TOKEN"] }), []);
+  assert.throws(() => assertPortableWorkflowText("证据在 C:\\Users\\tester\\result.json", "verification.md"), /本机绝对路径/);
+  assert.throws(() => assertPortableWorkflowText("证据在 `/tmp/result.json`", "verification.md"), /本机绝对路径/);
+  assert.throws(() => assertPortableWorkflowText("证据在 \\\\server\\share\\result.json", "verification.md"), /本机绝对路径/);
+  assert.throws(() => assertPortableWorkflowText("证据在 `/workspace/repo/result.json`", "verification.md"), /本机绝对路径/);
+  assert.throws(() => assertPortableWorkflowText("证据在 `/data/build/output.txt`", "verification.md"), /本机绝对路径/);
+  assert.throws(() => assertPortableWorkflowText("证据在 `file:///tmp/result.json`", "verification.md"), /本机绝对路径/);
+  assert.doesNotThrow(() => assertPortableWorkflowText("证据在 `artifacts/result.json`", "verification.md"));
+  assert.doesNotThrow(() => assertPortableWorkflowText("接口为 `https://example.com/root/items`", "verification.md"));
+  assert.doesNotThrow(() => assertPortableWorkflowText("页面路由为 `/home/dashboard`", "technical-design.md"));
+  assert.doesNotThrow(() => assertPortableWorkflowText("服务接口为 `/var/status`", "technical-design.md"));
 });
 
 test("活动文件锁不会仅因超时被抢占", (t) => {
@@ -134,6 +146,7 @@ test("iteration/task 状态只接受最小结构", () => {
 
   const task = {
     title: "任务",
+    binding_id: "task-binding",
     phase: "prd",
     repositories: [],
     created_at: new Date().toISOString(),
@@ -142,6 +155,23 @@ test("iteration/task 状态只接受最小结构", () => {
   };
   assert.equal(parseTaskData(task), task);
   assert.throws(() => parseTaskData({ ...task, checkpoints: {} }), /未知字段/);
+  const implementationTask = {
+    ...task,
+    phase: "implementation",
+    git: {
+      baseline: [{ id: "backend", branch: "main", head: "abc", dirty_paths: [] }],
+      final: null,
+    },
+    repositories: ["backend"],
+  };
+  assert.equal(parseTaskData(implementationTask), implementationTask);
+  assert.throws(
+    () => parseTaskData({
+      ...implementationTask,
+      git: { baseline: [{ ...implementationTask.git.baseline[0], root: "C:/local" }], final: null },
+    }),
+    /未知字段/,
+  );
 });
 
 test("公开命令面不再暴露已删除能力", () => {
@@ -207,6 +237,36 @@ test("工作流提示词不再要求调用已删除命令", () => {
   }
 });
 
+test("发布契约保持可移植、中文提交信息和强验证门禁", () => {
+  const read = (path) => readFileSync(join(REPOSITORY_ROOT, path), "utf8");
+  const published = [
+    "AGENTS.md",
+    "README.md",
+    "tools/workflow/doctor.js",
+    ".agents/skills/sw-setup/SKILL.md",
+    ".agents/skills/sw-spec/SKILL.md",
+    ".agents/skills/sw-implement/SKILL.md",
+    ".agents/skills/sw-verify/SKILL.md",
+    ".agents/skills/sw-simple-change/SKILL.md",
+    ".agents/skills/sw-fix-bug/SKILL.md",
+    ".agents/skills/sw-release-plan/SKILL.md",
+  ].map(read).join("\n");
+  assert.doesNotMatch(published, /\bmise\b/i);
+  assert.match(read("AGENTS.md"), /英文 type，subject 和 body 使用简体中文/);
+  assert.match(read("AGENTS.md"), /本机绝对路径.*版本管理器.*命令包装/);
+  assert.match(read(".agents/skills/sw-prd/SKILL.md"), /已解决 Q ID 不再被描述为待决条件/);
+  assert.match(read(".agents/skills/sw-domain-modeling/SKILL.md"), /旧 ADR ID/);
+  assert.match(read(".agents/skills/sw-technical-design/SKILL.md"), /动态负向验证/);
+  assert.match(read(".agents/skills/sw-spec/SKILL.md"), /仓库.*原生命令/);
+  assert.match(read(".agents/skills/code-review/references/correctness-quality.md"), /每一个 `await`/);
+  assert.match(read(".agents/skills/code-review/SKILL.md"), /Bug 修复或处理审查发现后的复审/);
+  assert.match(read(".agents/skills/sw-release-plan/SKILL.md"), /试运行.*不能.*实际发布/);
+  assert.match(read(".agents/skills/sw-release-plan/SKILL.md"), /iteration status <iteration> --check --json/);
+  for (const skill of ["sw-verify", "sw-simple-change", "sw-fix-bug", "sw-release-plan"]) {
+    assert.match(read(`.agents/skills/${skill}/SKILL.md`), /中文 subject\/body/);
+  }
+});
+
 test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收口", (t) => {
   const { workflow, backend, frontend, invoke, run, runJson, fail } = createWorkflow(t);
   const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
@@ -214,6 +274,14 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   const setup = runJson("setup", "--agent", "codex", ...repositories);
   assert.equal(setup.config.agent.id, "codex");
   assert.deepEqual(setup.config.repositories.map((repo) => repo.id), ["backend", "frontend"]);
+  assert.deepEqual(setup.actions, [
+    { action: "created", path: "AGENTS.local.md" },
+    { action: "updated", path: ".git/info/exclude" },
+  ]);
+  assert.deepEqual(runJson("setup", "--agent", "codex", ...repositories).actions, [
+    { action: "unchanged", path: "AGENTS.local.md" },
+    { action: "unchanged", path: ".git/info/exclude" },
+  ]);
   assert.equal(runJson("doctor").some((check) => check.level === "error"), false);
   assert.deepEqual(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")), setup.config);
   assert.match(fail("iteration", "create", "--title", "   "), /不能为空/);
@@ -349,7 +417,9 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
     "--replace",
   );
   assert.ok(lstatSync(conflict).isSymbolicLink());
-  run("setup", "--agent", "codex", ...repositories);
+  const nativeActions = runJson("setup", "--agent", "codex", ...repositories).actions;
+  assert.ok(nativeActions.some((item) => item.action === "removed" && item.path === "CLAUDE.md"));
+  assert.ok(nativeActions.some((item) => item.action === "updated" && item.path === "AGENTS.local.md"));
   assert.equal(existsSync(join(workflow, "CLAUDE.md")), false);
   assert.match(fail("setup", "--agent", "bad", "--entry-path", "../outside.md", ...repositories), /边界/);
 
@@ -372,24 +442,43 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   );
   assert.equal(runJson("task", "list").length, 1);
   assert.match(fail("task", "phase", task.path, "technical_design", "--confirmed"), /prd\.md/);
-  writeFileSync(join(taskDirectory, "prd.md"), "", "utf8");
+  writeFileSync(join(taskDirectory, "prd.md"), "# PRD\n\n### AC-001 行为\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "technical_design", "--confirmed"), /decisions\.md/);
   writeFileSync(join(taskDirectory, "decisions.md"), "用户内容\n", "utf8");
   assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /只能从/);
 
   let status = runJson("task", "phase", task.path, "technical_design", "--confirmed");
   assert.equal(status.phase, "technical_design");
-  writeFileSync(join(taskDirectory, "technical-design.md"), "", "utf8");
+  writeFileSync(join(taskDirectory, "technical-design.md"), "# 技术方案\n\nAC-002\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /AC ID.*不一致/);
+  writeFileSync(join(taskDirectory, "technical-design.md"), "# 技术方案\n\nAC-001\n", "utf8");
   run("task", "phase", task.path, "implementation_spec", "--confirmed");
-  writeFileSync(join(taskDirectory, "spec.md"), "", "utf8");
+  writeFileSync(join(taskDirectory, "spec.md"), "# Spec\n\nAC-001\n\nC:\\Users\\tester\\repo\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /本机绝对路径/);
+  writeFileSync(join(taskDirectory, "spec.md"), "# Spec\n\nAC-001\n", "utf8");
   status = runJson("task", "phase", task.path, "implementation", "--confirmed");
   assert.equal(status.git.baseline.length, 2);
-  assert.equal(status.git.baseline[0].root, resolve(backend));
+  assert.deepEqual(Object.keys(status.git.baseline[0]).sort(), ["branch", "dirty_paths", "head", "id"]);
+  assert.equal(readFileSync(join(taskDirectory, "task.json"), "utf8").includes(resolve(backend)), false);
+  assert.equal(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")).task_bindings.length, 1);
 
   writeFileSync(join(backend, "README.md"), "# Changed but uncommitted\n", "utf8");
   run("task", "phase", task.path, "verification", "--confirmed");
   assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /verification\.md/);
-  writeFileSync(join(taskDirectory, "verification.md"), "", "utf8");
-  run(
+  writeFileSync(join(taskDirectory, "verification.md"), "# 验证\n\nAC-001\n", "utf8");
+  const backendClone = join(dirname(backend), "backend clone");
+  git(dirname(backend), "clone", backend, backendClone);
+  runJson(
+    "setup",
+    "--agent",
+    "codex",
+    "--repo",
+    `backend=${backendClone}`,
+    "--repo",
+    `frontend=${frontend}`,
+  );
+  assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /仓库映射.*变化/);
+  const swappedSetup = runJson(
     "setup",
     "--agent",
     "codex",
@@ -398,11 +487,13 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
     "--repo",
     `frontend=${backend}`,
   );
+  assert.ok(swappedSetup.actions.some((item) => item.action === "updated" && item.path === "AGENTS.local.md"));
   assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /仓库映射.*变化/);
   run("setup", "--agent", "codex", ...repositories);
   status = runJson("task", "phase", task.path, "done", "--confirmed");
   assert.equal(status.git.final.length, 2);
   assert.ok(status.git.final.find((repo) => repo.id === "backend").dirty_paths.includes("README.md"));
+  assert.equal(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")).task_bindings.length, 0);
   status = runJson("task", "reopen", task.path, "--confirmed");
   assert.equal(status.phase, "verification");
   assert.equal(status.git.final, null);
@@ -427,7 +518,23 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   assert.equal(iterationState.tasks[0].phase, "done");
   assert.equal(iterationState.simple_changes.length, 1);
   assert.match(fail("iteration", "close", iteration.id, "--confirmed"), /release-plan\.md/);
+  writeFileSync(join(workflow, "iterations", iteration.id, "release-plan.md"), "# Release\n\nC:\\Users\\tester\\artifact\n", "utf8");
+  assert.match(fail("iteration", "status", iteration.id, "--check"), /本机绝对路径/);
+  assert.match(fail("iteration", "close", iteration.id, "--confirmed"), /本机绝对路径/);
   writeFileSync(join(workflow, "iterations", iteration.id, "release-plan.md"), "# Release\n", "utf8");
+  const releaseArtifacts = join(workflow, "iterations", iteration.id, "artifacts");
+  mkdirSync(releaseArtifacts);
+  writeFileSync(join(releaseArtifacts, "evidence.html"), "<p>C:\\Users\\tester\\result.json</p>\n", "utf8");
+  assert.match(fail("iteration", "status", iteration.id, "--check"), /本机绝对路径/);
+  rmSync(join(releaseArtifacts, "evidence.html"));
+  const linkedArtifacts = join(dirname(workflow), "linked artifacts");
+  mkdirSync(linkedArtifacts);
+  symlinkSync(linkedArtifacts, join(releaseArtifacts, "linked"), process.platform === "win32" ? "junction" : "dir");
+  assert.match(fail("iteration", "status", iteration.id, "--check"), /符号链接/);
+  rmSync(join(releaseArtifacts, "linked"), { recursive: true, force: true });
+  rmSync(linkedArtifacts, { recursive: true, force: true });
+  assert.equal(runJson("iteration", "status", iteration.id, "--check").checks.portable_files, "pass");
+  rmSync(releaseArtifacts, { recursive: true, force: true });
   iterationState = runJson("iteration", "close", iteration.id, "--confirmed");
   assert.equal(iterationState.status, "closed");
   assert.ok(runJson("iteration", "list", "--status", "closed").some((item) => item.id === iteration.id));

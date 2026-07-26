@@ -17,13 +17,13 @@ description: 初始化或更新工作流的 Agent 接入、仓库映射和项目
 
 ## 职责边界
 
-CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skills 路径，以及仓库 ID 到 canonical Git 根目录的映射。CLI 写入入口受管块、Skills 链接和本地 Git 排除规则。
+CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skills 路径、仓库 ID 到 canonical Git 根目录的映射，以及实施中任务到 exact root 的临时绑定。CLI 写入入口受管块、Skills 链接和本地 Git 排除规则；任务绑定进入 done 后自动移除。
 
 本 Skill 负责理解并写入项目事实：
 
 - 项目名称、目标和仓库角色写入 `CONTEXT.md`、`project/index.md`；
-- 模块、启动命令、默认端口、运行时、环境变量名、配置中心、外部依赖、联调方式、环境列表和切换方式写入 `project/repositories/<repo-id>.md`；
-- 本机命令或端口覆盖、本地可操作环境和远程只读环境写在 `AGENTS.local.md` 的 CLI 受管块之外。
+- 模块、仓库原生启动与验证命令、默认端口、运行时要求、环境变量名、配置中心、外部依赖、联调方式、环境列表和切换方式写入 `project/repositories/<repo-id>.md`；
+- 除 CLI 受管的仓库映射和临时任务绑定外，本机绝对路径、命令包装、版本管理器、可执行文件位置、端口覆盖、本地可操作环境和远程只读环境写在 `AGENTS.local.md` 的 CLI 受管块之外。
 
 本地事实不能扩大 `AGENTS.md` 的安全授权。任何位置都只记录环境变量名、依赖和获取方式，不记录凭据值。
 
@@ -38,8 +38,8 @@ CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skil
    node tools/workflow.js setup --agent <id> [--entry-path <path>] [--skills-path <path>] --repo <repo-id>=<git-root> ... --json
    ```
 
-   若目标 Skills 位置已有用户内容，停止并展示冲突；只有用户明确允许覆盖这些精确目标后才添加 `--replace`。完成：CLI 受管配置和接入已同步，不存在部分替换。
-5. 创建或更新 `CONTEXT.md`、`project/index.md`、对应仓库说明，以及 `AGENTS.local.md` 受管块外的本机事实。保留用户已有内容和当前事实，不创建额外状态文件。完成：项目事实可从约定入口发现。
+   若目标 Skills 位置已有用户内容，停止并展示冲突；只有用户明确允许覆盖这些精确目标后才添加 `--replace`。核对 JSON `actions` 已逐项反映受管路径的 `created/updated/unchanged/removed`；实际内容变化却没有对应 action 时视为 setup 失败，不用额外写入掩盖。完成：CLI 受管配置和接入已同步，不存在部分替换。
+5. 创建或更新 `CONTEXT.md`、`project/index.md`、对应仓库说明，以及 `AGENTS.local.md` 受管块外的本机事实。保留用户已有内容和当前事实，不创建额外状态文件；提交前检查项目事实没有本机绝对路径、命令包装、版本管理器或可执行文件位置。完成：项目事实可从约定入口发现且可跨环境复用。
 6. 运行 `node tools/workflow.js doctor --json`。只处理其报告的接入错误；doctor 无 error 后结束。完成：工作流、Agent、Skills 和仓库映射均可用。
 
 ## 安全规则

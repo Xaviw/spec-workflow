@@ -23,6 +23,8 @@
 - 工作流只设计和静态审查 DDL，不执行 DDL、生产写入或不可逆数据操作。
 - 敏感信息保护优先于日志完整性，不得为排障记录令牌、口令、私钥或完整个人敏感信息。
 - 目标仓库明确记录的规则优先；与根目录规范冲突且影响实施时，在 `spec.md` 对应步骤记录取舍并随实施方案取得用户确认，不得静默选择。
+- 工作流仓库中可提交的文档、状态和 artifact 只保存仓库 ID、仓库根相对路径和仓库原生命令；本机绝对路径、可执行文件位置、端口覆盖、版本管理器及命令包装只保存在被 Git 排除的 `AGENTS.local.md` 或临时目录，不得写入任务文档、项目事实或提交内容。
+- Git 提交沿用目标仓库已有格式；没有更具体规则时使用 Conventional Commit 的英文 type，subject 和 body 使用简体中文，例如 `feat: 增加来源链接去重能力`。提交计划必须展示每个仓库的完整 message。
 
 详细规范位于根目录 `standards/`。不得批量读取；仅在任务命中下列条件时读取直接相关文档：
 
@@ -73,15 +75,17 @@
 
 ## 完整性约定
 
-1. `phase` 只表示任务位置，不代表当前产物合格。每次工作前运行 `task status <task> --json`；产物质量由阶段 Skill、审查和用户确认负责，CLI 只检查当前阶段文件是否存在。
+1. `phase` 只表示任务位置，不代表当前产物合格。每次工作前运行 `task status <task> --json`；CLI 在阶段推进时检查产物存在、AC ID 集合一致且不含可识别的本机绝对路径，内容质量仍由阶段 Skill、审查和用户确认负责。阶段 Skill 在申请确认前必须完成自身的一致性检查。
 2. PRD 验收项使用稳定 ID（`AC-001` 起）；技术方案、实施方案和验证记录必须覆盖同一组 ID。`pass` 和 `human-confirmed` 必须附证据，`waived` 必须附理由。
 3. `--confirmed` 只声明用户已经确认本次推进，不保存审批、hash 或回执。上游事实变化时由当前 Skill 识别受影响文档、重新审阅并再次取得确认。
 4. 阶段文档用 inline code 写出实际依赖的仓库根相对路径，例如 `CONTEXT.md`、`adr/0001-example.md` 或 `project/repositories/backend.md`；不要引用未读取的长期记忆。
 5. CLI 写入使用原子替换和简单文件锁；长流程写入前重新读取状态，不维护 revision 或乐观并发协议。
 6. `task create` 只创建目录和 `task.json`。`prd.md`、`decisions.md`、`technical-design.md`、`spec.md`、`verification.md` 均由对应 Skill 创建和维护。
-7. 进入 implementation 时 CLI 自动记录各目标仓库的 canonical root、branch、baseline HEAD 和初始脏文件；进入 done 时记录最终 HEAD、tree 和剩余脏文件。这些是事实，不是质量门禁。
+7. 进入 implementation 时 CLI 根据本地仓库映射记录各目标仓库的 ID、branch、baseline HEAD 和初始脏文件，并在被 Git 排除的本地配置中暂存任务与 exact canonical root 的绑定，不把 root 写入任务状态；进入 done 时校验本地绑定、分支和 baseline 历史后记录最终 HEAD、tree 和剩余脏文件。这些是事实，不是质量门禁。
 8. verification 完成后先给出一次多仓提交计划并取得一次用户授权，再提交各代码仓库；用户确认任务完成后运行相邻阶段推进命令，CLI 自动采集最终 Git 快照。
 9. `task phase` 只能相邻向前推进。开放迭代中的 cancelled 任务恢复到取消前阶段，done 任务固定恢复到 verification；已收口迭代应在新迭代建立关联任务。
+10. 上游事实变化时，先列出受影响的当前任务文档、`CONTEXT.md` 和相关 ADR，一次完成同步，再在该有限集合内检查旧术语、已解决 Q ID、被替代 ADR 和旧验证命令是否仍被当作当前事实引用；同一批受影响文档一次请求确认。
+11. `spec.md` 和 `verification.md` 只记录仓库说明中的原生验证命令，例如 `npm test`；Agent 可按本机环境临时包装执行，但不得把包装器写回工作流文档，并须确认实际命令退出状态与结果摘要一致。
 
 ## 不可违反的边界
 

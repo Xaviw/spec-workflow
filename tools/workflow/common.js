@@ -46,6 +46,7 @@ export const ROOT = canonicalBoundaryPath(
 );
 export const ITERATIONS_DIR = join(ROOT, "iterations");
 export const LOCAL_CONFIG_FILE = join(ROOT, "AGENTS.local.md");
+export const SETUP_LOCK_FILE = join(ROOT, ".spec-workflow.setup.lock");
 export const LOCAL_START = "<!-- spec-driven:local-config:start -->";
 export const LOCAL_END = "<!-- spec-driven:local-config:end -->";
 export const PHASES = [
@@ -63,7 +64,7 @@ export const PHASE_FILES = {
   verification: "verification.md",
 };
 
-const BOOLEAN_OPTIONS = new Set(["help", "json", "confirmed", "replace"]);
+const BOOLEAN_OPTIONS = new Set(["help", "json", "confirmed", "replace", "check"]);
 const VALUE_OPTIONS = new Set([
   "agent",
   "entry-path",
@@ -85,6 +86,7 @@ const ITERATION_FIELDS = new Set([
 ]);
 const TASK_FIELDS = new Set([
   "title",
+  "binding_id",
   "phase",
   "repositories",
   "created_at",
@@ -379,6 +381,30 @@ export function assertNoSecrets(value) {
   }
 }
 
+export function assertPortableWorkflowText(text, label) {
+  const unambiguous = /(?<![A-Za-z0-9_./:-])(?:[A-Za-z]:[\\/]|\\\\[^\\\s]+\\[^\\\s]+)|(?<![A-Za-z0-9_])file:\/\/\/[^\s`'"\)\]}>;,]+/im;
+  const posixLocal = /(?<![A-Za-z0-9_./:-])\/(?:Users|Volumes|home|mnt)\/[^/\s`'"\)\]}>;,]+\/[^\s`'"\)\]}>;,]+|(?<![A-Za-z0-9_./:-])\/(?:data|workspaces?)\/[^/\s`'"\)\]}>;,]+\/[^\s`'"\)\]}>;,]+|(?<![A-Za-z0-9_./:-])\/(?:etc|opt|root|srv|tmp)\/[^\s`'"\)\]}>;,]+|(?<![A-Za-z0-9_./:-])\/private\/(?:etc|tmp|var)\/[^\s`'"\)\]}>;,]+|(?<![A-Za-z0-9_./:-])\/usr\/(?:bin|lib|local|sbin|share)(?:\/[^\s`'"\)\]}>;,]+)?|(?<![A-Za-z0-9_./:-])\/var\/(?:cache|lib|log|run|tmp)(?:\/[^\s`'"\)\]}>;,]+)?/m;
+  if (unambiguous.test(text) || posixLocal.test(text)) {
+    throw new Error(label + " 包含本机绝对路径；请改用仓库 ID 或根相对路径");
+  }
+}
+
+export function assertPortableWorkflowFiles(directory) {
+  const visit = (current, prefix = "") => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const name = prefix ? prefix + "/" + entry.name : entry.name;
+      const path = join(current, entry.name);
+      if (entry.isSymbolicLink()) throw new Error(name + " 是符号链接；工作流产物必须是普通文件或目录");
+      if (entry.isDirectory()) visit(path, name);
+      else if (entry.isFile()) {
+        const content = readFileSync(path);
+        if (!content.includes(0)) assertPortableWorkflowText(content.toString("utf8"), name);
+      }
+    }
+  };
+  visit(directory);
+}
+
 const WINDOWS_RESERVED_NAMES = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 export function assertPortableId(value, label = "ID") {
   const id = String(value || "");
@@ -436,7 +462,7 @@ export function discoverSkills(root = ROOT) {
 }
 
 export function parseSetupConfig(raw, root = ROOT) {
-  assertExactFields(raw, new Set(["schema_version", "agent", "repositories"]), "setup 配置");
+  assertExactFields(raw, new Set(["schema_version", "agent", "repositories", "task_bindings"]), "setup 配置");
   if (raw.schema_version !== 1) throw new Error("setup 配置 schema_version 必须为 1");
   assertExactFields(raw.agent, AGENT_FIELDS, "agent");
   if (typeof raw.agent.id !== "string" || !raw.agent.id.trim()) throw new Error("agent.id 不能为空");
@@ -485,7 +511,30 @@ export function parseSetupConfig(raw, root = ROOT) {
     paths.add(key);
     return { id, path };
   });
-  const config = { schema_version: 1, agent, repositories };
+  if (raw.task_bindings !== undefined && !Array.isArray(raw.task_bindings)) {
+    throw new Error("task_bindings 必须是数组");
+  }
+  const bindingIds = new Set();
+  const task_bindings = (raw.task_bindings || []).map((binding) => {
+    assertExactFields(binding, new Set(["task", "repositories"]), "task binding");
+    const task = assertPortableId(binding.task, "task binding ID");
+    if (bindingIds.has(task)) throw new Error("task binding ID 重复: " + task);
+    bindingIds.add(task);
+    if (!Array.isArray(binding.repositories)) throw new Error("task binding repositories 必须是数组");
+    const repositoryIds = new Set();
+    const boundRepositories = binding.repositories.map((repository) => {
+      assertExactFields(repository, REPOSITORY_FIELDS, "task binding repository");
+      const id = assertPortableId(repository.id, "仓库 ID");
+      if (repositoryIds.has(id)) throw new Error("task binding 仓库 ID 重复: " + id);
+      repositoryIds.add(id);
+      if (typeof repository.path !== "string" || !isAbsolute(repository.path)) {
+        throw new Error("task binding repository.path 必须是绝对路径");
+      }
+      return { id, path: canonicalBoundaryPath(repository.path) };
+    });
+    return { task, repositories: boundRepositories };
+  });
+  const config = { schema_version: 1, agent, repositories, task_bindings };
   assertNoSecrets(config);
   return config;
 }
@@ -494,6 +543,46 @@ export function readLocalConfig(root = ROOT) {
   const path = join(root, "AGENTS.local.md");
   if (!existsSync(path)) return null;
   return parseSetupConfig(extractManagedJson(readText(path)), root);
+}
+
+function writeLocalConfig(config, root = ROOT) {
+  const path = join(root, "AGENTS.local.md");
+  writeText(path, replaceManagedBlock(readText(path), config));
+}
+
+export function bindTaskRepositories(task, repositoryIds, root = ROOT) {
+  const config = readLocalConfig(root);
+  if (!config) throw new Error("缺少 setup 配置，请先执行 setup");
+  const byId = new Map(config.repositories.map((repository) => [repository.id, repository]));
+  const repositories = repositoryIds.map((id) => {
+    const repository = byId.get(id);
+    if (!repository) throw new Error("未登记仓库: " + id);
+    return { id, path: repository.path };
+  });
+  config.task_bindings = config.task_bindings.filter((binding) => binding.task !== task);
+  config.task_bindings.push({ task, repositories });
+  writeLocalConfig(config, root);
+  return new Map(repositories.map((repository) => [repository.id, repository.path]));
+}
+
+export function taskRepositoryBindings(task, repositoryIds, root = ROOT) {
+  const config = readLocalConfig(root);
+  if (!config) throw new Error("缺少 setup 配置，请先执行 setup");
+  const binding = config.task_bindings.find((item) => item.task === task);
+  if (!binding) return bindTaskRepositories(task, repositoryIds, root);
+  const byId = new Map(binding.repositories.map((repository) => [repository.id, repository.path]));
+  const missing = repositoryIds.filter((id) => !byId.has(id));
+  if (missing.length) throw new Error("任务本地仓库绑定不完整: " + missing.join(", "));
+  return byId;
+}
+
+export function removeTaskRepositoryBinding(task, root = ROOT) {
+  const config = readLocalConfig(root);
+  if (!config) return;
+  const remaining = config.task_bindings.filter((binding) => binding.task !== task);
+  if (remaining.length === config.task_bindings.length) return;
+  config.task_bindings = remaining;
+  writeLocalConfig(config, root);
 }
 
 function validDate(value) {
@@ -506,7 +595,7 @@ function validateSnapshot(snapshot, final) {
   for (const item of snapshot) {
     const required = final
       ? ["id", "head", "tree", "dirty_paths"]
-      : ["id", "root", "branch", "head", "dirty_paths"];
+      : ["id", "branch", "head", "dirty_paths"];
     assertExactFields(item, new Set(required), "Git 快照项");
     if (required.some((field) => item[field] === undefined)) throw new Error("Git 快照字段不完整");
     for (const field of required.filter((field) => field !== "dirty_paths")) {
@@ -557,6 +646,7 @@ export function parseTaskData(raw) {
   ) {
     throw new Error("task.repositories 必须是无重复数组");
   }
+  assertPortableId(raw.binding_id, "task.binding_id");
   if (raw.cancelled_from !== null && !PHASES.slice(0, -1).includes(raw.cancelled_from)) {
     throw new Error("cancelled_from 无效");
   }
@@ -638,7 +728,7 @@ function dirtyPaths(root) {
   return [...new Set(paths)].sort();
 }
 
-export function captureRepositories(repositoryIds, final, root = ROOT, expectedRoots = null) {
+export function captureRepositories(repositoryIds, final, root = ROOT, expectedRepositories = null) {
   const config = readLocalConfig(root);
   if (!config) throw new Error("缺少 setup 配置，请先执行 setup");
   const byId = new Map(config.repositories.map((repository) => [repository.id, repository]));
@@ -646,9 +736,13 @@ export function captureRepositories(repositoryIds, final, root = ROOT, expectedR
   return repositoryIds.map((id) => {
     const repository = byId.get(id);
     if (!repository) throw new Error("未登记仓库: " + id);
-    const expectedRoot = expectedRoots?.get(id);
-    if (expectedRoot && pathKey(repository.path) !== pathKey(expectedRoot)) {
-      throw new Error("任务执行期间仓库映射发生变化: " + id);
+    const expected = expectedRepositories?.get(id);
+    if (expected) {
+      const branch = runGit(["branch", "--show-current"], repository.path);
+      const mergeBase = runGit(["merge-base", expected.head, "HEAD"], repository.path, true);
+      if (pathKey(repository.path) !== pathKey(expected.path) || branch !== expected.branch || mergeBase !== expected.head) {
+        throw new Error("任务执行期间仓库映射、分支或历史发生变化: " + id);
+      }
     }
     const snapshot = final
       ? {
@@ -658,7 +752,6 @@ export function captureRepositories(repositoryIds, final, root = ROOT, expectedR
         }
       : {
           id,
-          root: repository.path,
           branch: runGit(["branch", "--show-current"], repository.path),
           head: runGit(["rev-parse", "HEAD"], repository.path),
         };

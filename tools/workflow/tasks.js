@@ -1,9 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import {
   PHASES,
   PHASE_FILES,
+  SETUP_LOCK_FILE,
+  assertPortableWorkflowText,
+  bindTaskRepositories,
   captureRepositories,
   iterationLockPath,
   listTaskDirectories,
@@ -12,15 +16,26 @@ import {
   parseTaskData,
   readJson,
   readLocalConfig,
+  readText,
   relativeWorkflowPath,
+  removeTaskRepositoryBinding,
   resolveIteration,
   resolveTask,
   slugify,
+  taskRepositoryBindings,
   today,
   uniqueDirectory,
   withFileLocks,
   writeJson,
 } from "./common.js";
+
+const ARTIFACTS_BY_PHASE = {
+  technical_design: ["prd.md"],
+  implementation_spec: ["prd.md", "technical-design.md"],
+  implementation: ["prd.md", "technical-design.md", "spec.md"],
+  verification: ["prd.md", "technical-design.md", "spec.md"],
+  done: ["prd.md", "technical-design.md", "spec.md", "verification.md"],
+};
 
 function now() {
   return new Date().toISOString();
@@ -49,6 +64,32 @@ function assertRepositories(ids) {
   if (new Set(ids).size !== ids.length) throw new Error("仓库 ID 不能重复");
 }
 
+function acceptanceIds(text) {
+  return [...new Set(text.match(/\bAC-\d{3}\b/g) || [])].sort();
+}
+
+function assertTaskArtifacts(directory, targetPhase) {
+  if (targetPhase === "technical_design" && !existsSync(join(directory, "decisions.md"))) {
+    throw new Error("缺少当前阶段产物: decisions.md");
+  }
+  const files = ARTIFACTS_BY_PHASE[targetPhase] || [];
+  const entries = files.map((file) => {
+    const text = readText(join(directory, file));
+    assertPortableWorkflowText(text, file);
+    return { file, ids: acceptanceIds(text) };
+  });
+  const expected = entries[0]?.ids || [];
+  if (!expected.length) throw new Error("prd.md 缺少稳定 AC ID");
+  for (const entry of entries.slice(1)) {
+    if (entry.ids.join("\0") !== expected.join("\0")) {
+      throw new Error(`${entry.file} 的 AC ID 与 prd.md 不一致`);
+    }
+  }
+  if (existsSync(join(directory, "decisions.md"))) {
+    assertPortableWorkflowText(readText(join(directory, "decisions.md")), "decisions.md");
+  }
+}
+
 export function createTask(options) {
   const title = String(options.title || "").trim();
   if (!options.iteration || !title) {
@@ -67,6 +108,7 @@ export function createTask(options) {
     mkdirSync(directory);
     const task = {
       title,
+      binding_id: randomUUID(),
       phase: "prd",
       repositories,
       created_at: now(),
@@ -124,7 +166,7 @@ export function transitionTask(reference, targetPhase, options) {
   if (!options.confirmed) throw new Error("推进任务阶段需要用户确认和 --confirmed");
   const directory = resolveTask(reference);
   const iteration = dirname(directory);
-  return withFileLocks([iterationLockPath(iteration)], () => {
+  return withFileLocks([iterationLockPath(iteration), SETUP_LOCK_FILE], () => {
     assertOpenIteration(iteration);
     const task = readTask(directory);
     const currentIndex = PHASES.indexOf(task.phase);
@@ -139,19 +181,29 @@ export function transitionTask(reference, targetPhase, options) {
     if (artifact && !existsSync(join(directory, artifact))) {
       throw new Error("缺少当前阶段产物: " + artifact);
     }
+    assertTaskArtifacts(directory, targetPhase);
+    let clearBinding = false;
     if (targetPhase === "implementation") {
-      task.git.baseline = captureRepositories(task.repositories, false);
+      const baseline = captureRepositories(task.repositories, false);
+      bindTaskRepositories(task.binding_id, task.repositories);
+      task.git.baseline = baseline;
     }
     if (targetPhase === "done") {
+      const bindings = taskRepositoryBindings(task.binding_id, task.repositories);
       task.git.final = captureRepositories(
         task.repositories,
         true,
         undefined,
-        new Map(task.git.baseline.map((repository) => [repository.id, repository.root])),
+        new Map(task.git.baseline.map((repository) => [
+          repository.id,
+          { ...repository, path: bindings.get(repository.id) },
+        ])),
       );
+      clearBinding = true;
     }
     task.phase = targetPhase;
     writeJson(join(directory, "task.json"), task);
+    if (clearBinding) removeTaskRepositoryBinding(task.binding_id);
     return taskStatus(directory);
   });
 }
@@ -175,13 +227,14 @@ export function reopenTask(reference, options) {
   if (!options.confirmed) throw new Error("重开任务需要 --confirmed");
   const directory = resolveTask(reference);
   const iteration = dirname(directory);
-  return withFileLocks([iterationLockPath(iteration)], () => {
+  return withFileLocks([iterationLockPath(iteration), SETUP_LOCK_FILE], () => {
     assertOpenIteration(iteration);
     const task = readTask(directory);
     if (task.phase === "cancelled") {
       task.phase = task.cancelled_from;
       task.cancelled_from = null;
     } else if (task.phase === "done") {
+      bindTaskRepositories(task.binding_id, task.repositories);
       task.phase = "verification";
       task.git.final = null;
     } else {

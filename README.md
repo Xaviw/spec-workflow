@@ -28,7 +28,7 @@ CLI 只处理重复、稳定、结构化的动作：
 - Git 快照自动记录实施基线与最终事实；
 - simple change 追加最小交付记录。
 
-Skills 负责理解环境、编写 Markdown、判断内容质量、组织评审和取得用户确认。CLI 不解析标题、AC、证据或占位文本，不生成阶段文档和发布方案，也不维护长期记忆、审批、内容 hash 或并发 revision。
+Skills 负责理解环境、编写 Markdown、判断内容质量、组织评审和取得用户确认。CLI 只从阶段文档提取 AC ID 以检查覆盖集合，并拒绝可识别的本机绝对路径；它不解释标题、证据、命令语义或占位文本，不生成阶段文档和发布方案，也不维护长期记忆、审批、内容 hash 或并发 revision。
 
 ## Setup
 
@@ -39,6 +39,8 @@ node tools/workflow.js setup --agent <id> [--entry-path <relative-path>] [--skil
 ```
 
 不传 `--entry-path` 表示 Agent 原生读取根 `AGENTS.md`；不传 `--skills-path` 表示原生读取 `.agents/skills`。CLI 不维护 Agent 名单。目标 Skills 位置存在用户内容时停止，只有用户明确授权后才使用 `--replace`。
+
+JSON 输出的 `actions` 按受管路径返回 `created`、`updated`、`unchanged` 或 `removed`，可用于核对本地配置、排除规则、Agent 入口和 Skills 链接是否真的发生变化。
 
 入口和 Skills 必须使用专用的接入路径，二者不能重叠，也不能指向 `.git`、`.agents`、`tools`、`iterations`、项目事实或其他工作流受管文件。setup 在写入前完成预检，失败时恢复本次已经修改的接入内容。
 
@@ -53,13 +55,14 @@ CLI 只管理 `AGENTS.local.md` 中的配置块：
   "repositories": [
     {
       "id": "backend",
-      "path": "C:/projects/backend"
+      "path": "<canonical-git-root>"
     }
-  ]
+  ],
+  "task_bindings": []
 }
 ```
 
-项目目标、仓库角色、模块、启动命令、端口、环境变量名、配置中心、联调方式和环境矩阵由 setup Skill 写入 `CONTEXT.md`、`project/index.md` 和 `project/repositories/*.md`。本机覆盖和环境权限写在 `AGENTS.local.md` 受管块之外。任何位置都不得保存凭据值。
+`task_bindings` 只在任务实施期间保存任务与 exact canonical root 的本地绑定，进入 done 后自动移除；它与仓库映射一样只存在于被 Git 排除的配置中。项目目标、仓库角色、模块、仓库原生启动与验证命令、默认端口、环境变量名、配置中心、联调方式和环境矩阵由 setup Skill 写入 `CONTEXT.md`、`project/index.md` 和 `project/repositories/*.md`。除受管仓库映射和任务绑定外，本机绝对路径、命令包装、版本管理器、端口覆盖和环境权限写在 `AGENTS.local.md` 受管块之外。任何位置都不得保存凭据值。
 
 ## Doctor
 
@@ -77,7 +80,7 @@ doctor 检查 Node.js、CLI、根入口、Skills 发现、setup 配置、目标 
 prd -> technical_design -> implementation_spec -> implementation -> verification -> done
 ```
 
-`task phase` 只允许显式进入相邻下一阶段，并要求 `--confirmed`。CLI 只检查当前阶段文件存在；产物质量由对应 Skill、代码审查和用户确认负责。
+`task phase` 只允许显式进入相邻下一阶段，并要求 `--confirmed`。CLI 检查当前阶段文件存在、PRD/技术方案/Spec/verification 的 AC ID 集合一致，且任务文档不含可识别的本机绝对路径；产物语义质量由对应 Skill、代码审查和用户确认负责。
 
 `task create` 只创建任务目录和 `task.json`。各 Skill 自行创建和维护：
 
@@ -86,11 +89,11 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 - `spec.md`
 - `verification.md`
 
-进入 implementation 时记录仓库 canonical root、branch、baseline HEAD 和初始脏文件；进入 done 时记录最终 HEAD、HEAD tree 和剩余脏文件。这些是追踪事实，不是质量门禁。
+进入 implementation 时根据本地映射记录仓库 ID、branch、baseline HEAD 和初始脏文件，并在 `AGENTS.local.md` 暂存 exact root 绑定，不提交 canonical root；进入 done 时校验 exact root、分支和 baseline 历史后记录最终 HEAD、HEAD tree 和剩余脏文件，并移除本地绑定。这些是追踪事实，不是质量门禁。
 
 ```text
 node tools/workflow.js iteration list [--status open|closed|cancelled] [--json]
-node tools/workflow.js iteration status <iteration> [--json]
+node tools/workflow.js iteration status <iteration> [--check] [--json]
 node tools/workflow.js iteration close <iteration> --confirmed
 node tools/workflow.js iteration cancel <iteration> --confirmed
 
@@ -112,7 +115,7 @@ node tools/workflow.js task move <task> --iteration <iteration>
 node tools/workflow.js simple-change add --iteration <iteration> --summary <text> --repositories backend,frontend
 ```
 
-CLI 自动记录最终 Git 快照。`iteration status --json` 聚合任务和 simple changes，供 `sw-release-plan` 编写 `release-plan.md`。CLI 不生成或确认发布方案；只有用户明确说明实际发布完成后，Skill 才运行 `iteration close --confirmed`。收口只检查全部任务已 done/cancelled 且 `release-plan.md` 存在。
+CLI 自动记录最终 Git 快照。`iteration status --json` 聚合任务和 simple changes，供 `sw-release-plan` 编写 `release-plan.md`；`iteration status --check --json` 在实际发布前只读检查迭代文件不含可识别的本机绝对路径或符号链接。CLI 不生成或确认发布方案；只有用户明确说明实际发布完成后，Skill 才运行 `iteration close --confirmed`。收口再次检查全部任务已 done/cancelled、`release-plan.md` 存在及同一组可移植性约束。
 
 ## 项目长期记忆
 

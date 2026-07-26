@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 
 import {
   ITERATIONS_DIR,
+  assertPortableWorkflowFiles,
   captureRepositories,
   iterationLockPath,
   optionList,
@@ -85,11 +86,12 @@ export function listIterations(options = {}) {
     .sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function iterationStatus(reference) {
+export function iterationStatus(reference, options = {}) {
   const directory = resolveIteration(reference);
+  if (options.check) assertPortableWorkflowFiles(directory);
   const iteration = readIteration(directory);
   const tasks = taskSummaries(directory);
-  return {
+  const result = {
     id: basename(directory),
     path: relativeWorkflowPath(directory),
     ...iteration,
@@ -103,6 +105,8 @@ export function iterationStatus(reference) {
       path: relativeWorkflowPath(join(directory, "release-plan.md")),
     },
   };
+  if (options.check) result.checks = { portable_files: "pass" };
+  return result;
 }
 
 export function closeIteration(reference, options) {
@@ -115,7 +119,9 @@ export function closeIteration(reference, options) {
       (task) => !["done", "cancelled"].includes(task.phase),
     );
     if (unfinished.length) throw new Error("迭代仍有未完成任务");
-    if (!existsSync(join(directory, "release-plan.md"))) throw new Error("缺少 release-plan.md");
+    const releasePlan = join(directory, "release-plan.md");
+    if (!existsSync(releasePlan)) throw new Error("缺少 release-plan.md");
+    assertPortableWorkflowFiles(directory);
     iteration.status = "closed";
     iteration.ended_at = now();
     writeJson(join(directory, "iteration.json"), iteration);
