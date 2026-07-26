@@ -1,136 +1,124 @@
 # spec-workflow
 
-独立于代码仓库的规格驱动工作区。一个工作流仓库管理一个逻辑项目，可以关联多个外部 Git 仓库；目标仓库无需安装工作流文件。
+一个独立于代码仓库的规格驱动工作区。它让 Agent 按“需求澄清 -> 技术方案 -> 实施 -> 验证 -> 交付”的顺序工作，并把任务文档、验收证据、项目事实和多仓 Git 快照集中保存。
 
-## 开始使用
+一个工作流仓库对应一个逻辑项目，可以关联多个外部 Git 仓库；目标代码仓库不需要安装本工作流。
+
+## 它会做什么
+
+- 通过 `Skill` 帮助 Agent 澄清需求、编写方案、实施代码、审查和验证。
+- 自动管理迭代、任务和阶段转换，避免状态与文件结构漂移。
+- 在多仓库任务开始和结束时记录 Git 基线、分支、提交和脏文件。
+- 保存项目长期记忆：术语、关键决策、项目事实和仓库导航。
+- 在发布前汇总已完成任务和简单变更，生成供评审的发布方案。
+
+工作流内部会自动维护结构化文件和状态；内容理解、文档质量、代码修改和用户确认由 Agent 与用户共同完成。
+
+## 五分钟上手
 
 要求 Git 和 Node.js 22.12.0 或更高版本。
 
-1. 复制本模板并初始化 Git 仓库。
-2. 从仓库根目录启动 Agent；若它没有自动读取入口，要求它读取 `AGENTS.md` 并调用 `sw-setup`。
-3. setup Skill 探测 Agent、目标仓库和项目事实，只询问无法确定的必要信息。
-4. setup 完成后由 Agent 运行 `node tools/workflow.js doctor`。
-5. 创建迭代和任务：
+1. 复制本模板，在副本根目录初始化 Git 仓库。
+2. 从工作流仓库根目录启动支持的 Agent。若 Agent 没有自动读取入口，发送：`请读取 AGENTS.md，并执行 sw-setup。`
+3. 按 `sw-setup` 的提示确认 Agent、目标 Git 仓库、项目目标以及启动和验证方式。
+4. 按 Agent 的提示补充无法自动确认的项目事实，并等待 Agent 完成接入检查。
+5. 直接向 Agent 描述需求。Agent 会判断是否需要新建迭代和任务，创建对应记录并进入需求澄清；你只需提供缺失信息和确认阶段产物。
 
-```text
-node tools/workflow.js iteration create --title "首个迭代"
-node tools/workflow.js task create --iteration <iteration-id> --title "任务名" --repositories backend,frontend
-node tools/workflow.js task status <task-path> --json
-```
+需要进入下一阶段时，Agent 会先请求你确认当前阶段的产物，不会自动跳过阶段。
 
-## Tools 边界
+## 日常使用
 
-CLI 只处理重复、稳定、结构化的动作：
-
-- setup 写入最小机器配置并同步 Agent 入口和 Skills 链接；
-- doctor 只读检查工作流和 Agent 接入；
-- iteration/task 命令维护最小状态和合法阶段转换；
-- Git 快照自动记录实施基线与最终事实；
-- simple change 追加最小交付记录。
-
-Skills 负责理解环境、编写 Markdown、判断内容质量、组织评审和取得用户确认。CLI 只从阶段文档提取 AC ID 以检查覆盖集合，并拒绝可识别的本机绝对路径；它不解释标题、证据、命令语义或占位文本，不生成阶段文档和发布方案，也不维护长期记忆、审批、内容 hash 或并发 revision。
-
-## Setup
-
-setup CLI 非交互且调用即写入。setup Skill 根据 Agent 能力传入必要路径：
-
-```text
-node tools/workflow.js setup --agent <id> [--entry-path <relative-path>] [--skills-path <relative-path>] --repo backend=<git-root> --repo frontend=<git-root> --json
-```
-
-不传 `--entry-path` 表示 Agent 原生读取根 `AGENTS.md`；不传 `--skills-path` 表示原生读取 `.agents/skills`。CLI 不维护 Agent 名单。目标 Skills 位置存在用户内容时停止，只有用户明确授权后才使用 `--replace`。
-
-JSON 输出的 `actions` 按受管路径返回 `created`、`updated`、`unchanged` 或 `removed`，可用于核对本地配置、排除规则、Agent 入口和 Skills 链接是否真的发生变化。
-
-入口和 Skills 必须使用专用的接入路径，二者不能重叠，也不能指向 `.git`、`.agents`、`tools`、`iterations`、项目事实或其他工作流受管文件。setup 在写入前完成预检，失败时恢复本次已经修改的接入内容。
-
-CLI 只管理 `AGENTS.local.md` 中的配置块：
-
-```json
-{
-  "schema_version": 1,
-  "agent": {
-    "id": "codex"
-  },
-  "repositories": [
-    {
-      "id": "backend",
-      "path": "<canonical-git-root>"
-    }
-  ],
-  "task_bindings": []
-}
-```
-
-`task_bindings` 只在任务实施期间保存任务与 exact canonical root 的本地绑定，进入 done 后自动移除；它与仓库映射一样只存在于被 Git 排除的配置中。项目目标、仓库角色、模块、仓库原生启动与验证命令、默认端口、环境变量名、配置中心、联调方式和环境矩阵由 setup Skill 写入 `CONTEXT.md`、`project/index.md` 和 `project/repositories/*.md`。除受管仓库映射和任务绑定外，本机绝对路径、命令包装、版本管理器、端口覆盖和环境权限写在 `AGENTS.local.md` 受管块之外。任何位置都不得保存凭据值。
-
-## Doctor
-
-```text
-node tools/workflow.js doctor [--json]
-```
-
-doctor 检查 Node.js、CLI、根入口、Skills 发现、setup 配置、目标 Git 根目录、当前 Agent 入口、Skills 链接和本地排除规则。它不扫描 iteration/task，不审查 Markdown、项目事实或 ADR，也不提供修复模式；修复交给 `sw-setup`。
-
-## Iteration 与 Task
-
-任务按固定顺序推进：
+任务按以下顺序推进：
 
 ```text
 prd -> technical_design -> implementation_spec -> implementation -> verification -> done
 ```
 
-`task phase` 只允许显式进入相邻下一阶段，并要求 `--confirmed`。CLI 检查当前阶段文件存在、PRD/技术方案/Spec/verification 的 AC ID 集合一致，且任务文档不含可识别的本机绝对路径；产物语义质量由对应 Skill、代码审查和用户确认负责。
+局部、低风险且不需要完整任务文档的改动，Agent 会在完成代码审查和验证后登记为简单变更。
 
-`task create` 只创建任务目录和 `task.json`。各 Skill 自行创建和维护：
+## Skill 说明
 
-- `prd.md` 与 `decisions.md`
-- `technical-design.md`
-- `spec.md`
-- `verification.md`
+通常由 Agent 根据请求自动选择；你也可以直接说出 Skill 名称来指定它。
 
-进入 implementation 时根据本地映射记录仓库 ID、branch、baseline HEAD 和初始脏文件，并在 `AGENTS.local.md` 暂存 exact root 绑定，不提交 canonical root；进入 done 时校验 exact root、分支和 baseline 历史后记录最终 HEAD、HEAD tree 和剩余脏文件，并移除本地绑定。这些是追踪事实，不是质量门禁。
+| Skill | 作用 | 使用时机 |
+| --- | --- | --- |
+| `sw-setup` | 初始化 Agent 接入、仓库映射和项目事实。 | 首次使用工作流，或接入配置发生变化时。 |
+| `sw-doctor` | 只读检查工作流、Agent 接入和仓库配置。 | 工作流无法正常运行，或接入变更后需要核验时。 |
+| `sw-route-task` | 判断开发请求的规模，并关联已有任务或选择新任务。 | 提出新增或修改功能，但没有指定任务时。 |
+| `sw-prd` | 澄清需求并维护 PRD 和任务决策。 | 新建任务、需求变化或验收口径不清时。 |
+| `sw-technical-design` | 编写或评审技术方案。 | 需求已确认，需要确定实现设计时。 |
+| `sw-spec` | 将技术方案转换为可执行的实施方案。 | 进入实施前，需要明确修改点和验证方式时。 |
+| `sw-implement` | 按已确认实施方案修改代码、测试、配置和文档。 | 任务进入实施阶段时。 |
+| `sw-verify` | 汇总代码审查、自动化检查、联调和交付证据。 | 任务进入最终验收阶段时。 |
+| `sw-simple-change` | 完成局部变更的实施、审查、验证和迭代登记。 | 变更简单、范围局部且不需要完整任务流程时。 |
+| `sw-fix-bug` | 定位并修复已确认预期不一致的 Bug。 | 报告报错、失败、回归、性能下降或偶发异常时。 |
+| `sw-release-plan` | 汇总迭代交付内容并编写发布方案。 | 迭代准备发布或需要发布前评审时。 |
+| `sw-domain-modeling` | 统一专业术语并记录关键决策。 | 需要更新 `CONTEXT.md`、创建 ADR 或统一项目概念时。 |
+| `code-review` | 审查指定代码、提交、分支或当前变更。 | 需要独立代码审查，且不要求自动修复时。 |
+| `grilling` | 通过结构化追问澄清必须由用户决定的取舍。 | 需求、方案或决策存在关键未决项时。 |
+| `ui-recreate` | 根据明确视觉基准实施或验证高保真 UI。 | 有 Figma、设计稿截图或其他明确视觉基准时。 |
+| `handoff` | 整理未完成工作的续做信息。 | 需要切换会话、交接任务或生成续做提示词时。 |
+| `skill-creator` | 创建、修改或评估 Agent Skill。 | 需要开发或优化 Skill 本身时。 |
+
+## 注意事项
+
+- 工作流仓库只保存仓库 ID、相对路径和原生命令；不要写入本机绝对路径、令牌、口令、私钥或其他凭据值。
+- `AGENTS.local.md` 用于本机配置，默认不提交。它可以保存仓库映射、任务绑定和本机环境覆盖。
+- 工作流不会执行 `stash`、`reset`、`checkout`、建分支、`push`、`merge`、部署、DDL 或生产写入。
+- 阶段转换、取消、重开或迭代收口都需要用户明确确认；确认本身不会替代代码审查和验证。
+- 多仓任务在 `verification` 完成后才制定一次提交计划；提交前仍由用户确认，不会自动 push。
+- 任务阶段表示工作位置，不等于质量结论。文档内容、验收证据和代码质量仍需 Agent、审查和用户共同确认。
+
+## 使用建议
+
+- 一个任务保持一个清晰目标；跨仓库改动在创建任务时登记涉及的仓库。
+- 先让 Agent 调查现状，再确认需求和方案；不要直接让它跳到实现。
+- 需求或技术事实改变后，要求 Agent 同步受影响的文档和项目记忆，再继续阶段转换。
+- 需要判断语义、风险或质量时，让 Agent 使用对应 Skill。
+
+## 术语表
+
+| 术语 | 含义 |
+| --- | --- |
+| 工作流仓库 | 保存本 README、`AGENTS.md`、Skills、工作流工具、任务文档和项目记忆的仓库；它不等于目标代码仓库。 |
+| 逻辑项目 | 工作流统一管理的项目边界；一个逻辑项目可以包含多个目标 Git 仓库。 |
+| 目标仓库 | 实际承载业务代码的外部 Git 仓库。 |
+| Agent | 执行工作流的 AI 编程工具，例如 Codex、Claude Code 或 Cursor。 |
+| Skill | 面向特定工作类型的 Agent 指令，例如 `sw-prd`、`sw-implement` 和 `code-review`。 |
+| `sw-` Skill | 依赖本工作流的任务状态和文档的原生 Skill。 |
+| setup / `sw-setup` | 建立 Agent 接入、目标仓库映射和项目事实的初始化过程。 |
+| doctor / `sw-doctor` | 只读检查运行环境、Agent 接入、Skills 和仓库映射的过程。 |
+| 迭代（iteration） | 一组在同一发布范围内管理的任务和简单变更。 |
+| 任务（task） | 一项需要经过阶段推进、验证和交付追踪的工作。 |
+| 阶段（phase） | 任务在固定生命周期中的当前位置；包括 `prd`、`technical_design`、`implementation_spec`、`implementation`、`verification` 和 `done`。 |
+| PRD | 产品需求文档，记录目标、范围、非目标、验收标准和待决问题。 |
+| 技术方案（technical design） | 说明如何满足已确认需求的技术设计文档。 |
+| 实施方案（implementation spec） | 将技术方案拆成可执行的修改点、仓库顺序和验证方式。 |
+| 验收标准（AC） | 可验证的需求结果，使用稳定 ID，例如 `AC-001`；后续方案和验证记录必须覆盖同一组 ID。 |
+| `grilling` | 按决策依赖分轮追问，用于澄清需求、方案或其他必须由用户决定的取舍。 |
+| 简单变更（simple change） | 不需要完整任务生命周期的局部变更；仍需完成审查、验证并登记到迭代。 |
+| 发布方案（release plan） | 汇总一个迭代中已完成任务和简单变更的交付清单，供发布前评审；它不执行发布。 |
+| 项目长期记忆 | 跨任务保留的项目级知识，包括 `CONTEXT.md`、ADR、项目索引和仓库事实。 |
+| `CONTEXT.md` | 项目长期记忆入口，保存项目简介、统一术语和关键决策索引。 |
+| ADR | Architecture Decision Record，记录难以逆转且存在真实取舍的项目级关键决策。 |
+| 项目事实 | 已验证的当前项目或仓库信息，例如模块、启动命令、环境和验证命令。 |
+| Artifact | 工作流产物，即任务、迭代或验证过程中生成的结构化文档或记录。 |
+| Git 快照 | 在实施开始或结束时记录的分支、提交、提交树和脏文件等 Git 状态。 |
+| baseline HEAD | 任务开始实施时目标仓库的基线提交。 |
+| canonical root | 目标 Git 仓库解析后的真实根目录，用于避免同一仓库被不同路径重复登记。 |
+| UI Slice | 高保真 UI 还原中可独立渲染、实施和验证的一小段界面范围。 |
+| DDL | Data Definition Language，数据库结构定义语句；本工作流只设计和静态审查，不执行 DDL。 |
+
+## 目录速览
 
 ```text
-node tools/workflow.js iteration list [--status open|closed|cancelled] [--json]
-node tools/workflow.js iteration status <iteration> [--check] [--json]
-node tools/workflow.js iteration close <iteration> --confirmed
-node tools/workflow.js iteration cancel <iteration> --confirmed
-
-node tools/workflow.js task list [--iteration <iteration>] [--json]
-node tools/workflow.js task status <task> [--json]
-node tools/workflow.js task phase <task> <next-phase> --confirmed
-node tools/workflow.js task cancel <task> --confirmed
-node tools/workflow.js task reopen <task> --confirmed
-node tools/workflow.js task move <task> --iteration <iteration>
+AGENTS.md                 Agent 最小入口
+.agents/skills/           原生与独立 Skills
+tools/                    工作流内部工具
+standards/                按需读取的工程规范
+CONTEXT.md                项目简介、术语和关键决策索引
+adr/                      项目级关键决策记录
+project/                  项目索引和仓库事实
+iterations/               迭代、任务和发布记录
+AGENTS.local.md           本机配置，不提交
 ```
-
-取消不会级联，也不会物理删除记录。开放迭代中的 cancelled 任务恢复到取消前阶段；done 任务固定恢复到 verification。closed/cancelled iteration 不重开。
-
-## 高保真 UI 还原
-
-`ui-recreate` 可独立根据 Figma 节点、设计稿截图或其他明确视觉基准实施、比对和修正前端 UI。大型设计稿不一次完整读取：PRD 只记录设计范围和精确节点，`spec.md` 按可独立渲染和验证的 UI Slice 排序，实施时只完整读取当前 Slice，最终在相同设计版本、视口和状态下验证。
-
-工作流任务由 `sw-implement` 和 `sw-verify` 按需调用该 Skill；局部简单 UI 变更和已有视觉缺陷分别由 `sw-simple-change`、`sw-fix-bug` 调用。`ui-recreate` 不增加 CLI 命令、任务阶段或 Slice 状态机。
-
-## Simple Change 与发布
-
-局部简单变更完成验证、审查和提交后，登记到开放迭代：
-
-```text
-node tools/workflow.js simple-change add --iteration <iteration> --summary <text> --repositories backend,frontend
-```
-
-CLI 自动记录最终 Git 快照。`iteration status --json` 聚合任务和 simple changes，供 `sw-release-plan` 编写 `release-plan.md`；`iteration status --check --json` 在实际发布前只读检查迭代文件不含可识别的本机绝对路径或符号链接。CLI 不生成或确认发布方案；只有用户明确说明实际发布完成后，Skill 才运行 `iteration close --confirmed`。收口再次检查全部任务已 done/cancelled、`release-plan.md` 存在及同一组可移植性约束。
-
-## 项目长期记忆
-
-`CONTEXT.md` 保存项目简介、专业术语和关键决策索引；ADR 位于根目录 `adr/`；`project/index.md` 和 `project/repositories/*.md` 保存验证后的当前事实。
-
-`sw-domain-modeling` 直接维护 `CONTEXT.md` 和 ADR。ADR 编号取现有文件最大编号加一，历史和冲突由 Git 管理，不使用额外 JSON 状态。
-
-## 命令输出
-
-全部命令支持 `--json`。JSON 模式的 stdout 只包含一个 JSON 值；错误写入 stderr。成功退出码为 0，失败为 1；doctor 只有 warning 时仍返回 0。
-
-CLI 不执行 stash、reset、checkout、建分支、push、merge、部署、DDL 或生产写入。
