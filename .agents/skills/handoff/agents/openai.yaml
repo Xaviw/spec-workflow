@@ -1,6 +1,0 @@
-interface:
-  display_name: "工作交接"
-  short_description: "将当前未完成工作整理为新会话可直接续做的交接提示词"
-  default_prompt: "使用 $handoff 将当前未完成工作整理为供新会话续做的交接提示词。"
-policy:
-  allow_implicit_invocation: false

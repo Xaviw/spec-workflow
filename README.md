@@ -107,6 +107,12 @@ node tools/workflow.js task move <task> --iteration <iteration>
 
 取消不会级联，也不会物理删除记录。开放迭代中的 cancelled 任务恢复到取消前阶段；done 任务固定恢复到 verification。closed/cancelled iteration 不重开。
 
+## 高保真 UI 还原
+
+`ui-recreate` 可独立根据 Figma 节点、设计稿截图或其他明确视觉基准实施、比对和修正前端 UI。大型设计稿不一次完整读取：PRD 只记录设计范围和精确节点，`spec.md` 按可独立渲染和验证的 UI Slice 排序，实施时只完整读取当前 Slice，最终在相同设计版本、视口和状态下验证。
+
+工作流任务由 `sw-implement` 和 `sw-verify` 按需调用该 Skill；局部简单 UI 变更和已有视觉缺陷分别由 `sw-simple-change`、`sw-fix-bug` 调用。`ui-recreate` 不增加 CLI 命令、任务阶段或 Slice 状态机。
+
 ## Simple Change 与发布
 
 局部简单变更完成验证、审查和提交后，登记到开放迭代：

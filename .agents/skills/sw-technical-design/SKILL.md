@@ -11,7 +11,7 @@ description: 为单个工作流任务编写或评审可追踪、可引用内部�
 
 迭代汇总必读：`iteration.json`、迭代内未取消任务的 `task.json`、已有 `technical-design.md`、[迭代技术方案模板](references/technical-design-template.md)和[技术方案写作参考](references/technical-design-guide.md)。
 
-按需读取：单任务涉及的规范、源码、测试、配置和项目知识；迭代汇总只有在已有方案存在缺口或冲突时，才读取对应任务的 `prd.md` 和 `decisions.md`。每次扩展上下文都服务于一个明确的设计问题。
+按需读取：单任务涉及的规范、源码、测试、配置和项目知识；UI 还原只读取解决当前设计问题所需的精确设计节点，不读取完整 Figma 文件；迭代汇总只有在已有方案存在缺口或冲突时，才读取对应任务的 `prd.md` 和 `decisions.md`。每次扩展上下文都服务于一个明确的设计问题。
 
 初始禁止：其他任务正文、无关仓库、完整项目知识库、实施步骤细节。
 

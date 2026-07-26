@@ -218,6 +218,7 @@ test("工作流提示词不再要求调用已删除命令", () => {
     ".agents/skills/sw-domain-modeling/SKILL.md",
     ".agents/skills/sw-fix-bug/SKILL.md",
     ".agents/skills/handoff/SKILL.md",
+    ".agents/skills/ui-recreate/SKILL.md",
   ];
   const content = files.map((file) => readFileSync(join(REPOSITORY_ROOT, file), "utf8")).join("\n");
   for (const removed of [
@@ -250,6 +251,7 @@ test("发布契约保持可移植、中文提交信息和强验证门禁", () =>
     ".agents/skills/sw-simple-change/SKILL.md",
     ".agents/skills/sw-fix-bug/SKILL.md",
     ".agents/skills/sw-release-plan/SKILL.md",
+    ".agents/skills/ui-recreate/SKILL.md",
   ].map(read).join("\n");
   assert.doesNotMatch(published, /\bmise\b/i);
   assert.match(read("AGENTS.md"), /英文 type，subject 和 body 使用简体中文/);
