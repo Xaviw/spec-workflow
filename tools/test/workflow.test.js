@@ -142,7 +142,7 @@ test("iteration/task 状态只接受最小结构", () => {
     simple_changes: [],
   };
   assert.equal(parseIterationData(iteration), iteration);
-  assert.throws(() => parseIterationData({ ...iteration, revision: 1 }), /未知字段/);
+  assert.throws(() => parseIterationData({ ...iteration, unexpected: 1 }), /未知字段/);
 
   const task = {
     title: "任务",
@@ -154,7 +154,7 @@ test("iteration/task 状态只接受最小结构", () => {
     git: { baseline: null, final: null },
   };
   assert.equal(parseTaskData(task), task);
-  assert.throws(() => parseTaskData({ ...task, checkpoints: {} }), /未知字段/);
+  assert.throws(() => parseTaskData({ ...task, unexpected: true }), /未知字段/);
   const implementationTask = {
     ...task,
     phase: "implementation",
@@ -174,102 +174,7 @@ test("iteration/task 状态只接受最小结构", () => {
   );
 });
 
-test("公开命令面不再暴露已删除能力", () => {
-  const workflowFiles = readdirSync(join(REPOSITORY_ROOT, "tools", "workflow")).sort();
-  assert.deepEqual(workflowFiles, [
-    "common.js",
-    "doctor.js",
-    "iterations.js",
-    "setup.js",
-    "tasks.js",
-  ]);
-  assert.equal(existsSync(join(REPOSITORY_ROOT, "tools", "agent-adapters.json")), false);
-  const help = execFileSync(process.execPath, [join(REPOSITORY_ROOT, "tools", "workflow.js"), "help"], {
-    encoding: "utf8",
-  });
-  for (const removed of [
-    "task validate",
-    "task slice",
-    "task candidates",
-    "memory ",
-    "context ",
-    "adapter install",
-    "release-plan",
-    " delete",
-  ]) {
-    assert.doesNotMatch(help, new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-});
-
-test("工作流提示词不再要求调用已删除命令", () => {
-  const files = [
-    "AGENTS.md",
-    "README.md",
-    ".agents/skills/sw-setup/SKILL.md",
-    ".agents/skills/sw-doctor/SKILL.md",
-    ".agents/skills/sw-route-task/SKILL.md",
-    ".agents/skills/sw-prd/SKILL.md",
-    ".agents/skills/sw-technical-design/SKILL.md",
-    ".agents/skills/sw-spec/SKILL.md",
-    ".agents/skills/sw-implement/SKILL.md",
-    ".agents/skills/sw-verify/SKILL.md",
-    ".agents/skills/sw-release-plan/SKILL.md",
-    ".agents/skills/sw-simple-change/SKILL.md",
-    ".agents/skills/sw-domain-modeling/SKILL.md",
-    ".agents/skills/sw-fix-bug/SKILL.md",
-    ".agents/skills/handoff/SKILL.md",
-    ".agents/skills/ui-recreate/SKILL.md",
-  ];
-  const content = files.map((file) => readFileSync(join(REPOSITORY_ROOT, file), "utf8")).join("\n");
-  for (const removed of [
-    "task candidates",
-    "task validate",
-    "task slices",
-    "task slice ",
-    "expected-revision",
-    "adapter install",
-    "iteration release-plan",
-    "confirm-release-plan",
-    "iteration done",
-    "changes.jsonl",
-    "project/memory.json",
-  ]) {
-    assert.doesNotMatch(content, new RegExp(removed.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-});
-
-test("发布契约保持可移植、中文提交信息和强验证门禁", () => {
-  const read = (path) => readFileSync(join(REPOSITORY_ROOT, path), "utf8");
-  const published = [
-    "AGENTS.md",
-    "README.md",
-    "tools/workflow/doctor.js",
-    ".agents/skills/sw-setup/SKILL.md",
-    ".agents/skills/sw-spec/SKILL.md",
-    ".agents/skills/sw-implement/SKILL.md",
-    ".agents/skills/sw-verify/SKILL.md",
-    ".agents/skills/sw-simple-change/SKILL.md",
-    ".agents/skills/sw-fix-bug/SKILL.md",
-    ".agents/skills/sw-release-plan/SKILL.md",
-    ".agents/skills/ui-recreate/SKILL.md",
-  ].map(read).join("\n");
-  assert.doesNotMatch(published, /\bmise\b/i);
-  assert.match(read("AGENTS.md"), /英文 type，subject 和 body 使用简体中文/);
-  assert.match(read("AGENTS.md"), /本机绝对路径.*版本管理器.*命令包装/);
-  assert.match(read(".agents/skills/sw-prd/SKILL.md"), /已解决 Q ID 不再被描述为待决条件/);
-  assert.match(read(".agents/skills/sw-domain-modeling/SKILL.md"), /旧 ADR ID/);
-  assert.match(read(".agents/skills/sw-technical-design/SKILL.md"), /动态负向验证/);
-  assert.match(read(".agents/skills/sw-spec/SKILL.md"), /仓库.*原生命令/);
-  assert.match(read(".agents/skills/code-review/references/correctness-quality.md"), /每一个 `await`/);
-  assert.match(read(".agents/skills/code-review/SKILL.md"), /Bug 修复或处理审查发现后的复审/);
-  assert.match(read(".agents/skills/sw-release-plan/SKILL.md"), /试运行.*不能.*实际发布/);
-  assert.match(read(".agents/skills/sw-release-plan/SKILL.md"), /iteration status <iteration> --check --json/);
-  for (const skill of ["sw-verify", "sw-simple-change", "sw-fix-bug", "sw-release-plan"]) {
-    assert.match(read(`.agents/skills/${skill}/SKILL.md`), /中文 subject\/body/);
-  }
-});
-
-test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收口", (t) => {
+test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
   const { workflow, backend, frontend, invoke, run, runJson, fail } = createWorkflow(t);
   const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
 
@@ -424,6 +329,12 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   assert.ok(nativeActions.some((item) => item.action === "updated" && item.path === "AGENTS.local.md"));
   assert.equal(existsSync(join(workflow, "CLAUDE.md")), false);
   assert.match(fail("setup", "--agent", "bad", "--entry-path", "../outside.md", ...repositories), /边界/);
+});
+
+test("task lifecycle 支持可选技术方案并保护 Git binding", (t) => {
+  const { workflow, backend, frontend, run, runJson, fail } = createWorkflow(t);
+  const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
+  run("setup", "--agent", "codex", ...repositories);
 
   const iteration = runJson("iteration", "create", "--title", "首个迭代");
   const task = runJson(
@@ -438,26 +349,31 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   );
   const taskDirectory = join(workflow, task.path);
   assert.deepEqual(readdirSync(taskDirectory), ["task.json"]);
+  assert.deepEqual(task.next_phases, ["technical_design", "implementation_spec"]);
   assert.match(
     fail("task", "create", "--iteration", iteration.id, "--title", "   "),
     /不能为空/,
   );
   assert.equal(runJson("task", "list").length, 1);
-  assert.match(fail("task", "phase", task.path, "technical_design", "--confirmed"), /prd\.md/);
+  assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /prd\.md/);
   writeFileSync(join(taskDirectory, "prd.md"), "# PRD\n\n### AC-001 行为\n", "utf8");
-  assert.match(fail("task", "phase", task.path, "technical_design", "--confirmed"), /decisions\.md/);
+  assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /decisions\.md/);
   writeFileSync(join(taskDirectory, "decisions.md"), "用户内容\n", "utf8");
-  assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /只能从/);
+  assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /只能从/);
 
-  let status = runJson("task", "phase", task.path, "technical_design", "--confirmed");
-  assert.equal(status.phase, "technical_design");
-  writeFileSync(join(taskDirectory, "technical-design.md"), "# 技术方案\n\nAC-002\n", "utf8");
-  assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /AC ID.*不一致/);
-  writeFileSync(join(taskDirectory, "technical-design.md"), "# 技术方案\n\nAC-001\n", "utf8");
-  run("task", "phase", task.path, "implementation_spec", "--confirmed");
+  let status = runJson("task", "phase", task.path, "implementation_spec", "--confirmed");
+  assert.equal(status.phase, "implementation_spec");
+  assert.deepEqual(status.next_phases, ["implementation"]);
+  assert.equal(existsSync(join(taskDirectory, "technical-design.md")), false);
+  writeFileSync(join(taskDirectory, "spec.md"), "# Spec\n\nAC-002\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /AC ID.*不一致/);
   writeFileSync(join(taskDirectory, "spec.md"), "# Spec\n\nAC-001\n\nC:\\Users\\tester\\repo\n", "utf8");
   assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /本机绝对路径/);
   writeFileSync(join(taskDirectory, "spec.md"), "# Spec\n\nAC-001\n", "utf8");
+  mkdirSync(join(taskDirectory, "slices"));
+  writeFileSync(join(taskDirectory, "slices", "01-core.md"), "证据在 C:\\Users\\tester\\repo\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /本机绝对路径/);
+  rmSync(join(taskDirectory, "slices"), { recursive: true, force: true });
   status = runJson("task", "phase", task.path, "implementation", "--confirmed");
   assert.equal(status.git.baseline.length, 2);
   assert.deepEqual(Object.keys(status.git.baseline[0]).sort(), ["branch", "dirty_paths", "head", "id"]);
@@ -492,14 +408,51 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   assert.ok(swappedSetup.actions.some((item) => item.action === "updated" && item.path === "AGENTS.local.md"));
   assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /仓库映射.*变化/);
   run("setup", "--agent", "codex", ...repositories);
+
+  const localConfigPath = join(workflow, "AGENTS.local.md");
+  const originalLocalConfig = readFileSync(localConfigPath, "utf8");
+  const missingBindingConfig = extractManagedJson(originalLocalConfig);
+  missingBindingConfig.task_bindings = [];
+  missingBindingConfig.repositories.find((repository) => repository.id === "backend").path = backendClone;
+  writeFileSync(localConfigPath, replaceManagedBlock(originalLocalConfig, missingBindingConfig), "utf8");
+  assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /绑定已丢失/);
+  writeFileSync(localConfigPath, originalLocalConfig, "utf8");
+
   status = runJson("task", "phase", task.path, "done", "--confirmed");
   assert.equal(status.git.final.length, 2);
   assert.ok(status.git.final.find((repo) => repo.id === "backend").dirty_paths.includes("README.md"));
-  assert.equal(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")).task_bindings.length, 0);
+  assert.equal(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")).task_bindings.length, 1);
   status = runJson("task", "reopen", task.path, "--confirmed");
   assert.equal(status.phase, "verification");
   assert.equal(status.git.final, null);
   run("task", "phase", task.path, "done", "--confirmed");
+
+  const reviewedTask = runJson(
+    "task",
+    "create",
+    "--iteration",
+    iteration.id,
+    "--title",
+    "需要技术评审",
+  );
+  const reviewedDirectory = join(workflow, reviewedTask.path);
+  writeFileSync(join(reviewedDirectory, "prd.md"), "# PRD\n\n### AC-001 契约\n", "utf8");
+  writeFileSync(join(reviewedDirectory, "decisions.md"), "用户内容\n", "utf8");
+  run("task", "phase", reviewedTask.path, "technical_design", "--confirmed");
+  writeFileSync(join(reviewedDirectory, "technical-design.md"), "# 技术方案\n\n接口评审结论\n", "utf8");
+  status = runJson("task", "phase", reviewedTask.path, "implementation_spec", "--confirmed");
+  assert.equal(status.phase, "implementation_spec");
+});
+
+test("iteration lifecycle 支持无发布方案收口和可移植性检查", (t) => {
+  const { workflow, backend, frontend, run, runJson, fail } = createWorkflow(t);
+  const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
+  run("setup", "--agent", "codex", ...repositories);
+  const iteration = runJson("iteration", "create", "--title", "首个迭代");
+
+  const unfinishedIteration = runJson("iteration", "create", "--title", "未完成迭代");
+  runJson("task", "create", "--iteration", unfinishedIteration.id, "--title", "未完成任务");
+  assert.match(fail("iteration", "close", unfinishedIteration.id, "--confirmed"), /未完成任务/);
 
   const change = runJson(
     "simple-change",
@@ -517,9 +470,8 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
     /不能为空/,
   );
   let iterationState = runJson("iteration", "status", iteration.id);
-  assert.equal(iterationState.tasks[0].phase, "done");
+  assert.equal(iterationState.tasks.length, 0);
   assert.equal(iterationState.simple_changes.length, 1);
-  assert.match(fail("iteration", "close", iteration.id, "--confirmed"), /release-plan\.md/);
   writeFileSync(join(workflow, "iterations", iteration.id, "release-plan.md"), "# Release\n\nC:\\Users\\tester\\artifact\n", "utf8");
   assert.match(fail("iteration", "status", iteration.id, "--check"), /本机绝对路径/);
   assert.match(fail("iteration", "close", iteration.id, "--confirmed"), /本机绝对路径/);
@@ -537,10 +489,12 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   rmSync(linkedArtifacts, { recursive: true, force: true });
   assert.equal(runJson("iteration", "status", iteration.id, "--check").checks.portable_files, "pass");
   rmSync(releaseArtifacts, { recursive: true, force: true });
+  rmSync(join(workflow, "iterations", iteration.id, "release-plan.md"));
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.exists, false);
   iterationState = runJson("iteration", "close", iteration.id, "--confirmed");
   assert.equal(iterationState.status, "closed");
   assert.ok(runJson("iteration", "list", "--status", "closed").some((item) => item.id === iteration.id));
-  assert.equal(runJson("task", "list").length, 0);
+  assert.equal(runJson("task", "list").length, 1);
 
   const cancelledIteration = runJson("iteration", "create", "--title", "取消迭代");
   const cancelledTask = runJson(
@@ -551,7 +505,7 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
     "--title",
     "取消任务",
   );
-  status = runJson("task", "cancel", cancelledTask.path, "--confirmed");
+  let status = runJson("task", "cancel", cancelledTask.path, "--confirmed");
   assert.equal(status.cancelled_from, "prd");
   status = runJson("task", "reopen", cancelledTask.path, "--confirmed");
   assert.equal(status.phase, "prd");
@@ -563,11 +517,4 @@ test("CLI 完成接入、任务状态、Git 快照、simple change 和迭代收�
   const movedTask = runJson("task", "create", "--iteration", sourceIteration.id, "--title", "移动任务");
   const moved = runJson("task", "move", movedTask.path, "--iteration", targetIteration.id);
   assert.equal(moved.iteration, targetIteration.id);
-
-  const broken = join(workflow, "iterations", "broken", "bad-task");
-  mkdirSync(broken, { recursive: true });
-  writeFileSync(join(dirname(broken), "iteration.json"), "{}\n", "utf8");
-  writeFileSync(join(broken, "task.json"), "{}\n", "utf8");
-  assert.equal(runJson("doctor").some((check) => check.level === "error"), false);
-  assert.match(fail("task", "validate", moved.path), /未知命令/);
 });

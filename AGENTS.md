@@ -37,8 +37,20 @@
 | Redis、缓存、分布式锁或限流计数 | `standards/redis.md` |
 | 上传、下载、对象存储、STS 或 CDN | `standards/security.md`、`standards/object-storage.md` |
 | 日志、requestId、链路、告警或审计 | `standards/logging.md`、`standards/security.md` |
+| 当前 Shell 为 PowerShell，且任务需要执行命令 | `standards/powershell.md` |
 
 不维护任务级规范绑定或完整规则清单。规则或例外实质影响某个实施步骤、审查发现或验证动作时，才在 `spec.md` 对应步骤或发现位置就地记录并按需引用规则 ID。
+
+执行过程中解决新的 Shell 问题后，只把与具体用户和机器无关、稳定且可复现的规则去重写入对应 Shell standard；用户环境特有信息仍只保存在 `AGENTS.local.md` 或临时目录。不同 Shell 使用独立规范，没有实际公共规则时不创建空文件。
+
+## `tools` 修改边界
+
+- 修改 Skill 或 Markdown 不自动授权修改 `tools/`；只有现有 CLI 无法保证已确认的状态不变量时才修改 CLI。
+- 新增 CLI 命令、持久化字段、状态文件、脚本入口或依赖前，必须说明要保证的状态不变量、现有命令为何不足、Skill 为何不能完成以及已确认调用场景；未经用户明确确认，不新增命令、别名、兼容分支、迁移、清理或诊断脚本。
+- 正式发布前不保留旧命令、字段或文件结构兼容，也不为已删除能力编写测试。优先修改现有命令和共享校验，不为单一场景增加抽象、配置或持久化状态。
+- CLI 只校验可确定判断的结构和状态，不通过关键词判断任务文档质量。测试只覆盖当前行为和重要不变量，不锁定提示词措辞；同一路径的等价错误只保留最小代表用例。
+- 测试使用 Node.js 标准库，不新增测试依赖、框架或辅助执行脚本。只有修改 `tools/workflow.js`、`tools/workflow/**`、状态结构、阶段转换、setup/doctor 行为，或 Skill 变化同时改变 CLI 契约时，才从工作流根运行 `node --test tools/test/workflow.test.js`；普通目标仓库开发和纯 Markdown 修改不运行。
+- 交付 `tools` 修改时列出命令面、持久化结构和新增文件变化；没有变化时明确说明无新增命令、字段或脚本。
 
 ## 项目长期记忆
 
@@ -67,7 +79,7 @@
 | `verification` | `sw-verify` |
 | `done` / `cancelled` | 只读；相关后续按规则重开或另行处理 |
 
-阶段依次为：`prd -> technical_design -> implementation_spec -> implementation -> verification -> done`。向前推进前必须取得用户对上一阶段文档的明确确认。不得自动进入 `done`。
+阶段依次为：`prd -> [technical_design ->] implementation_spec -> implementation -> verification -> done`。技术方案只在确实需要外部技术评审时生成；PRD 确认问题必须写明建议生成或跳过技术方案，并让用户同时确认后续路径。向前推进前必须取得用户对上一阶段文档和目标阶段的明确确认，不得自动进入 `done`。
 
 阶段 Skill 遇到必须由用户决定的未决项时调用 `grilling`，在当前请求中说明访谈主题、已知事实、待决范围和完成标准；有限选项确认不需要调用。`grilling` 只返回确认结果，阶段产物和阶段推进仍由阶段 Skill 负责。
 
@@ -76,16 +88,17 @@
 ## 完整性约定
 
 1. `phase` 只表示任务位置，不代表当前产物合格。每次工作前运行 `task status <task> --json`；CLI 在阶段推进时检查产物存在、AC ID 集合一致且不含可识别的本机绝对路径，内容质量仍由阶段 Skill、审查和用户确认负责。阶段 Skill 在申请确认前必须完成自身的一致性检查。
-2. PRD 验收项使用稳定 ID（`AC-001` 起）；技术方案、实施方案和验证记录必须覆盖同一组 ID。`pass` 和 `human-confirmed` 必须附证据，`waived` 必须附理由。
+2. PRD 验收项使用稳定 ID（`AC-001` 起）；实施方案和验证记录必须覆盖同一组 ID，技术方案只引用实际影响外部评审结论的 AC。`pass` 和 `human-confirmed` 必须附证据，`waived` 必须附理由。
 3. `--confirmed` 只声明用户已经确认本次推进，不保存审批、hash 或回执。上游事实变化时由当前 Skill 识别受影响文档、重新审阅并再次取得确认。
 4. 阶段文档用 inline code 写出实际依赖的仓库根相对路径，例如 `CONTEXT.md`、`adr/0001-example.md` 或 `project/repositories/backend.md`；不要引用未读取的长期记忆。
 5. CLI 写入使用原子替换和简单文件锁；长流程写入前重新读取状态，不维护 revision 或乐观并发协议。
-6. `task create` 只创建目录和 `task.json`。`prd.md`、`decisions.md`、`technical-design.md`、`spec.md`、`verification.md` 均由对应 Skill 创建和维护。
-7. 进入 implementation 时 CLI 根据本地仓库映射记录各目标仓库的 ID、branch、baseline HEAD 和初始脏文件，并在被 Git 排除的本地配置中暂存任务与 exact canonical root 的绑定，不把 root 写入任务状态；进入 done 时校验本地绑定、分支和 baseline 历史后记录最终 HEAD、tree 和剩余脏文件。这些是事实，不是质量门禁。
+6. `task create` 只创建目录和 `task.json`。`prd.md`、`decisions.md`、`spec.md`、`verification.md` 由对应 Skill 创建和维护；`technical-design.md` 仅在用户确认需要外部技术评审时创建。
+7. 进入 implementation 时 CLI 根据本地仓库映射记录各目标仓库的 ID、branch、baseline HEAD 和初始脏文件，并在被 Git 排除的本地配置中创建任务与 exact canonical root 的 binding，不把 root 写入任务状态；binding 只在此时创建并保留供 done 重开复用，implementation 后缺失时必须失败，不得按当前映射重建。进入 done 时校验本地 binding、分支和 baseline 历史后记录最终 HEAD、tree 和剩余脏文件。这些是事实，不是质量门禁。
 8. verification 完成后先给出一次多仓提交计划并取得一次用户授权，再提交各代码仓库；用户确认任务完成后运行相邻阶段推进命令，CLI 自动采集最终 Git 快照。
-9. `task phase` 只能相邻向前推进。开放迭代中的 cancelled 任务恢复到取消前阶段，done 任务固定恢复到 verification；已收口迭代应在新迭代建立关联任务。
+9. `task phase` 只能按已定义的向前转换推进；`prd` 可经 `technical_design` 或直接进入 `implementation_spec`，其余阶段只能相邻推进。开放迭代中的 cancelled 任务恢复到取消前阶段，done 任务固定恢复到 verification；已收口迭代应在新迭代建立关联任务。
 10. 上游事实变化时，先列出受影响的当前任务文档、`CONTEXT.md` 和相关 ADR，一次完成同步，再在该有限集合内检查旧术语、已解决 Q ID、被替代 ADR 和旧验证命令是否仍被当作当前事实引用；同一批受影响文档一次请求确认。
 11. `spec.md` 和 `verification.md` 只记录仓库说明中的原生验证命令，例如 `npm test`；Agent 可按本机环境临时包装执行，但不得把包装器写回工作流文档，并须确认实际命令退出状态与结果摘要一致。
+12. 短回复只解释为对紧邻且唯一确认问题的回答。上下文压缩、新会话或同时存在多个待确认项时，重新展示包含文档名称、关键决定和目标阶段的精简确认摘要，不从未提交文件或历史短回复猜测。
 
 ## 不可违反的边界
 

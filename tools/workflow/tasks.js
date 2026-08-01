@@ -3,9 +3,9 @@ import { existsSync, mkdirSync, readdirSync, renameSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 import {
-  PHASES,
   PHASE_FILES,
   SETUP_LOCK_FILE,
+  assertPortableWorkflowFiles,
   assertPortableWorkflowText,
   bindTaskRepositories,
   captureRepositories,
@@ -18,7 +18,6 @@ import {
   readLocalConfig,
   readText,
   relativeWorkflowPath,
-  removeTaskRepositoryBinding,
   resolveIteration,
   resolveTask,
   slugify,
@@ -31,10 +30,18 @@ import {
 
 const ARTIFACTS_BY_PHASE = {
   technical_design: ["prd.md"],
-  implementation_spec: ["prd.md", "technical-design.md"],
-  implementation: ["prd.md", "technical-design.md", "spec.md"],
-  verification: ["prd.md", "technical-design.md", "spec.md"],
-  done: ["prd.md", "technical-design.md", "spec.md", "verification.md"],
+  implementation_spec: ["prd.md"],
+  implementation: ["prd.md", "spec.md"],
+  verification: ["prd.md", "spec.md"],
+  done: ["prd.md", "spec.md", "verification.md"],
+};
+
+const NEXT_PHASES = {
+  prd: ["technical_design", "implementation_spec"],
+  technical_design: ["implementation_spec"],
+  implementation_spec: ["implementation"],
+  implementation: ["verification"],
+  verification: ["done"],
 };
 
 function now() {
@@ -69,7 +76,7 @@ function acceptanceIds(text) {
 }
 
 function assertTaskArtifacts(directory, targetPhase) {
-  if (targetPhase === "technical_design" && !existsSync(join(directory, "decisions.md"))) {
+  if (!existsSync(join(directory, "decisions.md"))) {
     throw new Error("缺少当前阶段产物: decisions.md");
   }
   const files = ARTIFACTS_BY_PHASE[targetPhase] || [];
@@ -88,6 +95,11 @@ function assertTaskArtifacts(directory, targetPhase) {
   if (existsSync(join(directory, "decisions.md"))) {
     assertPortableWorkflowText(readText(join(directory, "decisions.md")), "decisions.md");
   }
+  if (existsSync(join(directory, "technical-design.md"))) {
+    assertPortableWorkflowText(readText(join(directory, "technical-design.md")), "technical-design.md");
+  }
+  const slices = join(directory, "slices");
+  if (existsSync(slices)) assertPortableWorkflowFiles(slices);
 }
 
 export function createTask(options) {
@@ -125,7 +137,6 @@ export function taskStatus(reference) {
   const task = readTask(directory);
   const iteration = dirname(directory);
   const artifact = PHASE_FILES[task.phase] || null;
-  const phaseIndex = PHASES.indexOf(task.phase);
   return {
     id: basename(directory),
     path: relativeWorkflowPath(directory),
@@ -138,9 +149,7 @@ export function taskStatus(reference) {
           exists: existsSync(join(directory, artifact)),
         }
       : null,
-    next_phase: phaseIndex >= 0 && phaseIndex < PHASES.length - 1
-      ? PHASES[phaseIndex + 1]
-      : null,
+    next_phases: NEXT_PHASES[task.phase] || [],
   };
 }
 
@@ -169,20 +178,18 @@ export function transitionTask(reference, targetPhase, options) {
   return withFileLocks([iterationLockPath(iteration), SETUP_LOCK_FILE], () => {
     assertOpenIteration(iteration);
     const task = readTask(directory);
-    const currentIndex = PHASES.indexOf(task.phase);
-    if (currentIndex < 0 || currentIndex === PHASES.length - 1) {
+    const allowed = NEXT_PHASES[task.phase];
+    if (!allowed) {
       throw new Error("终态任务不能通过 task phase 推进");
     }
-    const expected = PHASES[currentIndex + 1];
-    if (targetPhase !== expected) {
-      throw new Error(`只能从 ${task.phase} 推进到 ${expected}`);
+    if (!allowed.includes(targetPhase)) {
+      throw new Error(`只能从 ${task.phase} 推进到 ${allowed.join(" 或 ")}`);
     }
     const artifact = PHASE_FILES[task.phase];
     if (artifact && !existsSync(join(directory, artifact))) {
       throw new Error("缺少当前阶段产物: " + artifact);
     }
     assertTaskArtifacts(directory, targetPhase);
-    let clearBinding = false;
     if (targetPhase === "implementation") {
       const baseline = captureRepositories(task.repositories, false);
       bindTaskRepositories(task.binding_id, task.repositories);
@@ -199,11 +206,9 @@ export function transitionTask(reference, targetPhase, options) {
           { ...repository, path: bindings.get(repository.id) },
         ])),
       );
-      clearBinding = true;
     }
     task.phase = targetPhase;
     writeJson(join(directory, "task.json"), task);
-    if (clearBinding) removeTaskRepositoryBinding(task.binding_id);
     return taskStatus(directory);
   });
 }
@@ -234,7 +239,6 @@ export function reopenTask(reference, options) {
       task.phase = task.cancelled_from;
       task.cancelled_from = null;
     } else if (task.phase === "done") {
-      bindTaskRepositories(task.binding_id, task.repositories);
       task.phase = "verification";
       task.git.final = null;
     } else {

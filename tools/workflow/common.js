@@ -569,20 +569,13 @@ export function taskRepositoryBindings(task, repositoryIds, root = ROOT) {
   const config = readLocalConfig(root);
   if (!config) throw new Error("缺少 setup 配置，请先执行 setup");
   const binding = config.task_bindings.find((item) => item.task === task);
-  if (!binding) return bindTaskRepositories(task, repositoryIds, root);
+  if (!binding) {
+    throw new Error("任务本地仓库绑定已丢失；请人工确认原仓库后恢复绑定");
+  }
   const byId = new Map(binding.repositories.map((repository) => [repository.id, repository.path]));
   const missing = repositoryIds.filter((id) => !byId.has(id));
   if (missing.length) throw new Error("任务本地仓库绑定不完整: " + missing.join(", "));
   return byId;
-}
-
-export function removeTaskRepositoryBinding(task, root = ROOT) {
-  const config = readLocalConfig(root);
-  if (!config) return;
-  const remaining = config.task_bindings.filter((binding) => binding.task !== task);
-  if (remaining.length === config.task_bindings.length) return;
-  config.task_bindings = remaining;
-  writeLocalConfig(config, root);
 }
 
 function validDate(value) {

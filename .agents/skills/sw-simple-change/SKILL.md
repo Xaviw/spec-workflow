@@ -1,6 +1,6 @@
 ---
 name: sw-simple-change
-description: 执行已确认不需要完整任务文档的局部代码或文档变更，并完成审查、验证、提交确认和迭代变更记录。仅在 sw-route-task 判定为简单任务后使用。
+description: 执行已确认无需建立工作流 task 的局部代码或文档变更，并完成审查、验证、提交确认和迭代变更记录。仅在 sw-route-task 判定为简单任务后使用。
 ---
 
 # 执行简单变更
@@ -21,7 +21,8 @@ description: 执行已确认不需要完整任务文档的局部代码或文档�
 2. 记录 branch、HEAD 和脏文件；重叠修改交由用户决定，不重叠修改经确认后排除。完成：提交与审查基线明确。
 3. 复用目标仓库已有模式和专业术语完成最小修改，并即时同步 `project/index.md` 或对应 `project/repositories/<repo-id>.md` 中失真的当前事实。形成需要 ADR 的关键决定时停止简单流程，转为工作流任务；仅需澄清已有项目概念时可调用 `sw-domain-modeling`。采用 TDD 时在公开测试接缝完成一个行为的有效 red，再写使其 green 的最小实现；局部变更要求依据 Figma、设计稿截图或其他明确视觉基准还原时调用 `ui-recreate` 的实现模式，范围仍必须能在一次上下文内完成，否则交回 `sw-route-task`。普通纯 UI、复杂交互或无稳定测试接缝的遗留代码可按已确认方式测试后补或执行最小替代验证。完成：修改和直接相关的行为及视觉验证通过，任务仍满足简单变更门禁。
 4. 以用户确认的文件或模块及步骤 2 记录的 `HEAD -> worktree` 为明确范围调用 `code-review`，排除初始脏文件和已确认的无关修改；把 `CONTEXT.md` 中命中 repo/module 的 ADR、相关仓库事实、用户请求和适用约束作为审查依据。审查报告必须列出实际读取的专项参考和实际验证覆盖；仅在本次包含 Bug 修复或处理审查发现后的复审时要求原始触发场景和修复后复核结果。本流程处理阻塞项，并在修复后按同一范围复审。完成：P0 已解决或证明误报，P1 已解决或由用户明确接受并写入本次变更验证摘要；自动验证无法覆盖时只列出必要的业务确认。
-5. 检查计划提交的工作流文件没有本机绝对路径、命令包装、版本管理器或可执行文件位置。汇总一次提交计划并取得一次确认；计划同时包含目标仓库提交、`simple-change add --iteration <id> --summary <text> --repositories <repo-id,...>` 生成的记录、工作流仓库提交和每个提交的完整 message，不得 push 或 merge。目标仓库没有更具体规则时使用 Conventional Commit 英文 type 和中文 subject/body。按该顺序执行，CLI 自动记录各仓库最终 HEAD、tree、剩余脏文件和时间。随后运行 `iteration status <iteration> --json`：仍有非终态任务时报告剩余项；全部任务均为 done/cancelled 时调用 `sw-release-plan` 生成发布方案。完成：简单变更已有可追踪记录，提交范围与一次授权一致，迭代下一步明确。
+5. 检查计划提交的工作流文件没有本机绝对路径、命令包装、版本管理器或可执行文件位置。展示包含目标仓库提交、`simple-change add --iteration <id> --summary <text> --repositories <repo-id,...>`、工作流仓库提交和每个完整 message 的计划；确认问题必须写明提交范围。取得一次确认后按顺序执行，不得 push 或 merge。CLI 自动记录各仓库最终 HEAD、tree、剩余脏文件和时间。
+6. 记录提交后运行 `iteration status <iteration> --json`。仍有非终态任务时只报告剩余项，不提示发布方案；全部任务均为 done/cancelled 时询问“A. 收口迭代并生成发布方案”或“B. 跳过发布方案并收口迭代”，明确选择同时确认运行 `iteration close <iteration> --confirmed` 和提交迭代状态。两种选择都先收口；选择 A 时随后调用 `sw-release-plan`，其失败或跳过不回退 iteration。工作流不追踪外部实际发布状态。完成：简单变更已有可追踪记录，提交范围与授权一致，迭代已继续开放或按选择收口。
 
 交付结果时提示：`若后续自测发现现有行为缺陷，直接说明现象或调用 sw-fix-bug 排查修复。`
 

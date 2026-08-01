@@ -29,7 +29,7 @@ description: 将当前未完成的工作流任务、简单变更、独立 Bug �
 
 ### 工作流任务
 
-1. 运行 `node tools/workflow.js task status <task> --json`，记录 task 根相对路径、phase、当前阶段产物是否存在、下一阶段和 baseline/final Git 快照。
+1. 运行 `node tools/workflow.js task status <task> --json`，记录 task 根相对路径、phase、当前阶段产物是否存在、允许的下一阶段和 baseline/final Git 快照。
 2. 只在判断进度和下一步所需时读取当前阶段产物、`decisions.md` 及其显式引用；交接中引用实际路径，不复制规格、ADR、提交或 diff 已保存的内容。
 3. 根据当前对话和仓库现场区分已完成、进行中、未开始与来源不明的修改。保留用户修改，不把脏文件自动归入本 task。
 4. 按 `AGENTS.md` 的 phase 路由给出下一会话应调用的唯一阶段 Skill；终态 task 只说明现状，不建议隐式重开。

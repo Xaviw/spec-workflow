@@ -110,7 +110,7 @@ export function iterationStatus(reference, options = {}) {
 }
 
 export function closeIteration(reference, options) {
-  if (!options.confirmed) throw new Error("收口迭代需要实际发布确认和 --confirmed");
+  if (!options.confirmed) throw new Error("收口迭代需要用户确认和 --confirmed");
   const directory = resolveIteration(reference);
   return withFileLocks([iterationLockPath(directory)], () => {
     const iteration = readIteration(directory);
@@ -119,8 +119,6 @@ export function closeIteration(reference, options) {
       (task) => !["done", "cancelled"].includes(task.phase),
     );
     if (unfinished.length) throw new Error("迭代仍有未完成任务");
-    const releasePlan = join(directory, "release-plan.md");
-    if (!existsSync(releasePlan)) throw new Error("缺少 release-plan.md");
     assertPortableWorkflowFiles(directory);
     iteration.status = "closed";
     iteration.ended_at = now();

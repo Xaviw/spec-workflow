@@ -1,6 +1,6 @@
 # spec-workflow
 
-一个独立于代码仓库的规格驱动工作区。它让 Agent 按“需求澄清 -> 技术方案 -> 实施 -> 验证 -> 交付”的顺序工作，并把任务文档、验收证据、项目事实和多仓 Git 快照集中保存。
+一个独立于代码仓库的规格驱动工作区。它让 Agent 按“需求澄清 -> 可选技术评审 -> 实施计划 -> 实施 -> 验证 -> 交付”的顺序工作，并把任务文档、验收证据、项目事实和多仓 Git 快照集中保存。
 
 一个工作流仓库对应一个逻辑项目，可以关联多个外部 Git 仓库；目标代码仓库不需要安装本工作流。
 
@@ -24,17 +24,17 @@
 4. 按 Agent 的提示补充无法自动确认的项目事实，并等待 Agent 完成接入检查。
 5. 直接向 Agent 描述需求。Agent 会判断是否需要新建迭代和任务，创建对应记录并进入需求澄清；你只需提供缺失信息和确认阶段产物。
 
-需要进入下一阶段时，Agent 会先请求你确认当前阶段的产物，不会自动跳过阶段。
+需要进入下一阶段时，Agent 会写明确认文档、关键决定和目标阶段。PRD 完成后，Agent 会建议生成技术方案或跳过技术方案直接生成实施计划，由你确认路径。
 
 ## 日常使用
 
 任务按以下顺序推进：
 
 ```text
-prd -> technical_design -> implementation_spec -> implementation -> verification -> done
+prd -> [technical_design ->] implementation_spec -> implementation -> verification -> done
 ```
 
-局部、低风险且不需要完整任务文档的改动，Agent 会在完成代码审查和验证后登记为简单变更。
+局部、低风险且无需建立工作流 task 的改动，Agent 会在完成代码审查和验证后登记为简单变更。
 
 ## Skill 说明
 
@@ -46,13 +46,13 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 | `sw-doctor` | 只读检查工作流、Agent 接入和仓库配置。 | 工作流无法正常运行，或接入变更后需要核验时。 |
 | `sw-route-task` | 判断开发请求的规模，并关联已有任务或选择新任务。 | 提出新增或修改功能，但没有指定任务时。 |
 | `sw-prd` | 澄清需求并维护 PRD 和任务决策。 | 新建任务、需求变化或验收口径不清时。 |
-| `sw-technical-design` | 编写或评审技术方案。 | 需求已确认，需要确定实现设计时。 |
-| `sw-spec` | 将技术方案转换为可执行的实施方案。 | 进入实施前，需要明确修改点和验证方式时。 |
+| `sw-technical-design` | 编写或评审精简的外部技术评审材料。 | PRD 已确认，且接口、数据、架构或关键风险确实需要外部评审时。 |
+| `sw-spec` | 根据 PRD 和可选技术方案生成可执行实施计划。 | 进入实施前，需要明确步骤或 Slice、修改点和验证方式时。 |
 | `sw-implement` | 按已确认实施方案修改代码、测试、配置和文档。 | 任务进入实施阶段时。 |
 | `sw-verify` | 汇总代码审查、自动化检查、联调和交付证据。 | 任务进入最终验收阶段时。 |
-| `sw-simple-change` | 完成局部变更的实施、审查、验证和迭代登记。 | 变更简单、范围局部且不需要完整任务流程时。 |
+| `sw-simple-change` | 完成局部变更的实施、审查、验证和迭代登记。 | 变更简单、范围局部且无需工作流 task 阶段时。 |
 | `sw-fix-bug` | 定位并修复已确认预期不一致的 Bug。 | 报告报错、失败、回归、性能下降或偶发异常时。 |
-| `sw-release-plan` | 汇总迭代交付内容并编写发布方案。 | 迭代准备发布或需要发布前评审时。 |
+| `sw-release-plan` | 为已收口迭代汇总可选发布方案。 | 需要面向外部做发布前评审时。 |
 | `sw-domain-modeling` | 统一专业术语并记录关键决策。 | 需要更新 `CONTEXT.md`、创建 ADR 或统一项目概念时。 |
 | `code-review` | 审查指定代码、提交、分支或当前变更。 | 需要独立代码审查，且不要求自动修复时。 |
 | `grilling` | 通过结构化追问澄清必须由用户决定的取舍。 | 需求、方案或决策存在关键未决项时。 |
@@ -68,11 +68,12 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 - 阶段转换、取消、重开或迭代收口都需要用户明确确认；确认本身不会替代代码审查和验证。
 - 多仓任务在 `verification` 完成后才制定一次提交计划；提交前仍由用户确认，不会自动 push。
 - 任务阶段表示工作位置，不等于质量结论。文档内容、验收证据和代码质量仍需 Agent、审查和用户共同确认。
+- 迭代全部任务终态后可以直接收口；发布方案是可跳过的外部评审材料，不影响 task 或 iteration 完成状态。
 
 ## 使用建议
 
 - 一个任务保持一个清晰目标；跨仓库改动在创建任务时登记涉及的仓库。
-- 先让 Agent 调查现状，再确认需求和方案；不要直接让它跳到实现。
+- 先让 Agent 调查现状并确认需求；没有外部技术评审需要时，直接根据 PRD 生成实施计划。
 - 需求或技术事实改变后，要求 Agent 同步受影响的文档和项目记忆，再继续阶段转换。
 - 需要判断语义、风险或质量时，让 Agent 使用对应 Skill。
 
@@ -90,14 +91,14 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 | doctor / `sw-doctor` | 只读检查运行环境、Agent 接入、Skills 和仓库映射的过程。 |
 | 迭代（iteration） | 一组在同一发布范围内管理的任务和简单变更。 |
 | 任务（task） | 一项需要经过阶段推进、验证和交付追踪的工作。 |
-| 阶段（phase） | 任务在固定生命周期中的当前位置；包括 `prd`、`technical_design`、`implementation_spec`、`implementation`、`verification` 和 `done`。 |
+| 阶段（phase） | 任务在生命周期中的当前位置；包括 `prd`、可选的 `technical_design`、`implementation_spec`、`implementation`、`verification` 和 `done`。 |
 | PRD | 产品需求文档，记录目标、范围、非目标、验收标准和待决问题。 |
-| 技术方案（technical design） | 说明如何满足已确认需求的技术设计文档。 |
-| 实施方案（implementation spec） | 将技术方案拆成可执行的修改点、仓库顺序和验证方式。 |
+| 技术方案（technical design） | 面向外部评审的精简材料，只记录接口、数据、关键链路、安全、架构和重要风险。 |
+| 实施方案（implementation spec） | 根据 PRD 和可选技术方案形成的唯一实施依据，记录步骤或 Slice、修改点、顺序和验证方式。 |
 | 验收标准（AC） | 可验证的需求结果，使用稳定 ID，例如 `AC-001`；后续方案和验证记录必须覆盖同一组 ID。 |
 | `grilling` | 按决策依赖分轮追问，用于澄清需求、方案或其他必须由用户决定的取舍。 |
-| 简单变更（simple change） | 不需要完整任务生命周期的局部变更；仍需完成审查、验证并登记到迭代。 |
-| 发布方案（release plan） | 汇总一个迭代中已完成任务和简单变更的交付清单，供发布前评审；它不执行发布。 |
+| 简单变更（simple change） | 无需建立工作流 task 的局部变更；仍需完成审查、验证并登记到迭代。 |
+| 发布方案（release plan） | 已收口迭代的可选外部评审材料；它不执行发布，也不影响任务或迭代状态。 |
 | 项目长期记忆 | 跨任务保留的项目级知识，包括 `CONTEXT.md`、ADR、项目索引和仓库事实。 |
 | `CONTEXT.md` | 项目长期记忆入口，保存项目简介、统一术语和关键决策索引。 |
 | ADR | Architecture Decision Record，记录难以逆转且存在真实取舍的项目级关键决策。 |
@@ -106,7 +107,7 @@ prd -> technical_design -> implementation_spec -> implementation -> verification
 | Git 快照 | 在实施开始或结束时记录的分支、提交、提交树和脏文件等 Git 状态。 |
 | baseline HEAD | 任务开始实施时目标仓库的基线提交。 |
 | canonical root | 目标 Git 仓库解析后的真实根目录，用于避免同一仓库被不同路径重复登记。 |
-| UI Slice | 高保真 UI 还原中可独立渲染、实施和验证的一小段界面范围。 |
+| Slice | 多步骤任务中可独立实施和验证的单元，保存在 `slices/*.md`，不拥有独立 CLI 状态。 |
 | DDL | Data Definition Language，数据库结构定义语句；本工作流只设计和静态审查，不执行 DDL。 |
 
 ## 目录速览
