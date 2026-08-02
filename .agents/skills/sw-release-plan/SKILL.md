@@ -7,9 +7,9 @@ description: 为已收口迭代汇总已完成任务和简单变更，创建、�
 
 ## 上下文契约
 
-必读：`node tools/workflow.js iteration status <iteration> --check --json` 的结果。
+必读：`node tools/workflow.js iteration status <iteration> --check --json` 的结果、[发布方案模板](references/release-plan-template.md)和[发布方案写作参考](references/release-plan-guide.md)。
 
-按需读取：已有 `release-plan.md`、[发布方案模板](references/release-plan-template.md)和[发布方案写作参考](references/release-plan-guide.md)；当前章节缺少结论时，再读取 done 任务的 `task.json.git.final`、`verification.md`、可选 `technical-design.md`、`spec.md`、DDL artifact 和相关仓库说明。最终 Git 状态优先使用 `task.json.git.final`，不从验证时快照推断。
+按需读取：已有 `release-plan.md`；当前章节缺少结论时，再读取 done 任务的 `task.json.git.final`、`verification.md`、可选 `technical-design.md`、`spec.md`、DDL artifact 和相关仓库说明。最终 Git 状态优先使用 `task.json.git.final`，不从验证时快照推断。
 
 初始禁止：其他迭代、未完成任务正文、全部项目知识、目标仓库全量历史、生产凭据和正式环境写操作。
 
@@ -24,9 +24,9 @@ description: 为已收口迭代汇总已完成任务和简单变更，创建、�
 
 ## 流程
 
-1. 采用用户明确指定或调用方唯一传入的迭代，运行 `iteration status <iteration> --check --json`。iteration 必须已 `closed`；若仍为 open，本 Skill 不代为收口。汇总 done 任务、`simple_changes` 和 final Git 快照，排除 cancelled 任务。
-2. 读取模板、写作参考和已有方案。已有方案时更新，不存在时创建 `release-plan.md`；按业务能力和真实依赖组织发布概况、风险、变更、编排与验证、回滚及外部补充，不按任务顺序机械拼接。
-3. 缺少结论时只读取对应任务证据。任务间冲突能由已确认事实解决时统一，否则保留冲突并请用户决定；不扩大到生产环境取证。完成正确性、协作验证、风险恢复三轮评审。
-4. 展示方案、未解决阻塞、拟提交文件和完整提交 message。确认问题写明“确认 `release-plan.md` 并提交该可选评审材料”；仅评审时保持只读。取得明确提交授权后核对差异与可移植性，只提交本次方案。
+1. 采用用户明确指定或调用方唯一传入的迭代，运行 `iteration status <iteration> --check --json`。iteration 必须已 `closed`；若仍为 open，本 Skill 不代为收口。汇总 done 任务、`simple_changes` 和 final Git 快照，排除 cancelled 任务。完成：迭代已收口，发布范围只包含可追溯的已完成工作。
+2. 读取模板、写作参考和已有方案。已有方案时更新，不存在时创建 `release-plan.md`；按业务能力和真实依赖组织发布概况、风险、变更、编排与验证、回滚及外部补充，不按任务顺序机械拼接。删除没有事实支撑的章节，不保留“不适用”或占位语。完成：方案结构由实际变更决定，没有模板驱动的空内容。
+3. 缺少结论时只读取对应任务证据。任务间冲突能由已确认事实解决时统一，否则保留冲突并请用户决定；不扩大到生产环境取证。完成：正确性、协作验证、风险恢复三轮评审均已执行，结论可追溯，冲突已解决或明确待决。
+4. 展示方案、未解决阻塞、拟提交文件和完整提交 message。确认问题写明“确认 `release-plan.md` 并提交该可选评审材料”；仅评审时保持只读。取得明确提交授权后核对差异与可移植性，只提交本次方案。完成：只读评审未产生写入，或授权范围内仅提交本次方案。
 
 发布方案不存在、未确认或生成失败都不改变已完成 task 和已收口 iteration。正式发布仍由外部流程执行。

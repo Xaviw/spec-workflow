@@ -1,13 +1,15 @@
 ---
 name: sw-technical-design
-description: 为确实需要外部技术评审的工作流任务编写或评审精简技术方案，或将一个迭代内已有任务方案去重汇总。任务处于 technical_design，或用户要求编写、评审、汇总技术方案时使用。
+description: 编写、只读评审或汇总精简技术方案。工作流任务处于 phase=technical_design 时用于编写方案；用户明确要求评审已有方案或汇总一个迭代内的任务方案时使用。
 ---
 
 # 编写技术方案
 
 ## 上下文契约
 
-单任务必读：`task.json`、已确认的 `prd.md`、`decisions.md`、[单任务技术方案模板](references/task-technical-design-template.md)、[技术方案写作参考](references/technical-design-guide.md)和涉及仓库的说明文档。
+单任务编写必读：`task.json`、已确认的 `prd.md`、`decisions.md`、[技术方案模板](references/technical-design-template.md)、[技术方案写作参考](references/technical-design-guide.md)和涉及仓库的说明文档。
+
+只读评审必读：用户指定的方案、已确认需求与决定，以及 [技术方案写作参考](references/technical-design-guide.md)。
 
 迭代汇总必读：`iteration.json`、迭代内未取消任务的 `task.json`、已有任务 `technical-design.md`、[迭代技术方案模板](references/technical-design-template.md)和写作参考。
 
@@ -15,7 +17,7 @@ description: 为确实需要外部技术评审的工作流任务编写或评审�
 
 初始禁止：逐文件实施调查、完整源码扫描、测试命令验证、TDD 步骤、无关任务和全部项目知识。
 
-输出：单任务更新任务目录的 `technical-design.md`；迭代汇总更新 `iterations/<iteration-id>/technical-design.md`。两者都是可脱离实施过程阅读的精简外部评审材料，不是实施核心依据。
+输出：单任务编写更新任务目录的 `technical-design.md`；迭代汇总更新 `iterations/<iteration-id>/technical-design.md`；只读评审仅输出发现和残余风险。技术方案是可脱离实施过程阅读的精简外部评审材料，不是实施核心依据。
 
 ## 内容边界
 
@@ -27,15 +29,19 @@ description: 为确实需要外部技术评审的工作流任务编写或评审�
 
 ## 单任务流程
 
-1. 运行 `task status <task> --json`，确认 phase 为 `technical_design`，读取已确认 PRD、决定、仓库范围和全部 AC。
-2. 识别需要外部评审的接口、数据、关键链路、安全、架构、兼容和风险问题；只调查形成这些结论所需的当前事实。
-3. 按模板写入精简结论。没有实际评审内容的章节删除，不用“不适用”或占位语填充。
-4. 检查字段、状态、权限、异常和跨端约定是否一致。必须由用户决定且阻塞方案的取舍调用 `grilling`；新术语或达到 ADR 门槛的决定调用 `sw-domain-modeling`。
-5. 展示评审结论和未决风险。确认问题写明“确认 `technical-design.md` 的关键技术结论并进入 `implementation_spec`”；用户明确确认后运行 `task phase <task> implementation_spec --confirmed` 并调用 `sw-spec`。
+1. 运行 `task status <task> --json`，确认 phase 为 `technical_design`，读取已确认 PRD、决定、仓库范围和全部 AC。完成：外部评审范围和已确认约束已知。
+2. 识别需要外部评审的接口、数据、关键链路、安全、架构、兼容和风险问题；只调查形成这些结论所需的当前事实。完成：每个评审问题都有足够事实形成结论或明确阻塞。
+3. 按模板写入精简结论。没有实际评审内容的章节删除，不用“不适用”或占位语填充。完成：文档只保留实际命中的评审结论且可独立阅读。
+4. 检查字段、状态、权限、异常和跨端约定是否一致。必须由用户决定且阻塞方案的取舍调用 `grilling`；新术语或达到 ADR 门槛的决定调用 `sw-domain-modeling`。完成：跨章节约定一致，未决项都有明确责任和影响。
+5. 展示评审结论和未决风险。确认问题写明“确认 `technical-design.md` 的关键技术结论并进入 `implementation_spec`”；用户明确确认后运行 `task phase <task> implementation_spec --confirmed` 并调用 `sw-spec`。完成：已按确认成功进入 `implementation_spec`，或保留当前阶段等待明确确认。
+
+## 只读评审
+
+固定用户指定的方案和评审范围，对照已确认需求、决定及实际命中的接口、数据、安全、架构和风险规则检查一致性与遗漏。按影响排序报告具体位置、触发条件、影响和最小修正建议；证据不足的疑问列为未覆盖项，不改写方案、不推进阶段。完成：所有范围内章节均已检查，发现可复核，未覆盖项和残余风险明确。
 
 ## 迭代汇总
 
-只汇总已有任务技术方案，不从缺少方案的任务补造设计。按接口、数据、关键链路、安全、架构和风险去重组织；冲突无法由已确认事实解决时调用 `grilling`。汇总不修改任务阶段或单任务方案。
+只汇总已有任务技术方案，不从缺少方案的任务补造设计。按接口、数据、关键链路、安全、架构和风险去重组织；冲突无法由已确认事实解决时调用 `grilling`。汇总不修改任务阶段或单任务方案。完成：每项结论可追溯到已有方案，重复已合并，冲突已解决或明确待决。
 
 ## 写法
 
