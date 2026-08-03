@@ -79,7 +79,7 @@
 | `verification` | `sw-verify` |
 | `done` / `cancelled` | 只读；相关后续按规则重开或另行处理 |
 
-阶段依次为：`prd -> [technical_design ->] implementation_spec -> implementation -> verification -> done`。技术方案只在确实需要外部技术评审时生成；PRD 确认问题必须写明建议生成或跳过技术方案，并让用户同时确认后续路径。向前推进前必须取得用户对上一阶段文档和目标阶段的明确确认，不得自动进入 `done`。
+阶段依次为：`prd -> [technical_design ->] implementation_spec -> implementation -> verification -> done`。`technical_design` 是可选的独立技术评审，不是内部实施设计；跳过它时，实施必需的技术决定仍写入 `spec.md`。PRD、独立技术评审和实施方案各自只在进入下一授权边界前确认一次；已确认实施方案覆盖实施及内部验证衔接，`implementation -> verification` 由 Agent 自动推进。进入 `done` 仍必须取得包含验收结论和完整提交计划的一次明确授权。
 
 阶段 Skill 遇到必须由用户决定的未决项时调用 `grilling`，在当前请求中说明访谈主题、已知事实、待决范围和完成标准；有限选项确认不需要调用。`grilling` 只返回确认结果，阶段产物和阶段推进仍由阶段 Skill 负责。
 
@@ -94,11 +94,12 @@
 5. CLI 写入使用原子替换和简单文件锁；长流程写入前重新读取状态，不维护 revision 或乐观并发协议。
 6. `task create` 只创建目录和 `task.json`。`prd.md`、`decisions.md`、`spec.md`、`verification.md` 由对应 Skill 创建和维护；`technical-design.md` 仅在用户确认需要外部技术评审时创建。
 7. 进入 implementation 时 CLI 根据本地仓库映射记录各目标仓库的 ID、branch、baseline HEAD 和初始脏文件，并在被 Git 排除的本地配置中创建任务与 exact canonical root 的 binding，不把 root 写入任务状态；binding 只在此时创建并保留供 done 重开复用，implementation 后缺失时必须失败，不得按当前映射重建。进入 done 时校验本地 binding、分支和 baseline 历史后记录最终 HEAD、tree 和剩余脏文件。这些是事实，不是质量门禁。
-8. verification 完成后先给出一次多仓提交计划并取得一次用户授权，再提交各代码仓库；用户确认任务完成后运行相邻阶段推进命令，CLI 自动采集最终 Git 快照。
+8. verification 完成后在同一个确认问题中展示验收结论和完整多仓提交计划；该次授权同时允许提交各代码仓库、推进 `done`、采集最终 Git 快照和提交工作流文档，不再重复确认同一交付内容。
 9. `task phase` 只能按已定义的向前转换推进；`prd` 可经 `technical_design` 或直接进入 `implementation_spec`，其余阶段只能相邻推进。开放迭代中的 cancelled 任务恢复到取消前阶段，done 任务固定恢复到 verification；已收口迭代应在新迭代建立关联任务。
 10. 上游事实变化时，先列出受影响的当前任务文档、`CONTEXT.md` 和相关 ADR，一次完成同步，再在该有限集合内检查旧术语、已解决 Q ID、被替代 ADR 和旧验证命令是否仍被当作当前事实引用；同一批受影响文档一次请求确认。
 11. `spec.md` 和 `verification.md` 只记录仓库说明中的原生验证命令，例如 `npm test`；Agent 可按本机环境临时包装执行，但不得把包装器写回工作流文档，并须确认实际命令退出状态与结果摘要一致。
 12. 短回复只解释为对紧邻且唯一确认问题的回答。上下文压缩、新会话或同时存在多个待确认项时，重新展示包含文档名称、关键决定和目标阶段的精简确认摘要，不从未提交文件或历史短回复猜测。
+13. `release-plan.md` 是由已收口迭代派生的产物，首行必须记录 `iteration.json.ended_at` 的结构化来源标记。`iteration status` 只将标记与当前收口快照一致的方案报告为 `fresh`；文件存在不代表方案有效。
 
 ## 不可违反的边界
 

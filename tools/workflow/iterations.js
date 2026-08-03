@@ -10,6 +10,7 @@ import {
   parseIterationData,
   parseTaskData,
   readJson,
+  readText,
   relativeWorkflowPath,
   resolveIteration,
   slugify,
@@ -18,6 +19,8 @@ import {
   withFileLocks,
   writeJson,
 } from "./common.js";
+
+const RELEASE_PLAN_MARKER = /^<!-- spec-workflow:release-plan ended_at=([^\s]+) -->(?:\r?\n|$)/;
 
 function now() {
   return new Date().toISOString();
@@ -45,6 +48,18 @@ function taskSummaries(directory) {
       };
     })
     .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function releasePlanStatus(directory, iteration) {
+  const path = join(directory, "release-plan.md");
+  if (!existsSync(path)) {
+    return { status: "missing", path: relativeWorkflowPath(path) };
+  }
+  const sourceEndedAt = readText(path).match(RELEASE_PLAN_MARKER)?.[1];
+  return {
+    status: iteration.status === "closed" && sourceEndedAt === iteration.ended_at ? "fresh" : "stale",
+    path: relativeWorkflowPath(path),
+  };
 }
 
 export function createIteration(options) {
@@ -100,10 +115,7 @@ export function iterationStatus(reference, options = {}) {
       ["prd", "technical_design", "implementation_spec", "implementation", "verification", "done", "cancelled"]
         .map((phase) => [phase, tasks.filter((task) => task.phase === phase).length]),
     ),
-    release_plan: {
-      exists: existsSync(join(directory, "release-plan.md")),
-      path: relativeWorkflowPath(join(directory, "release-plan.md")),
-    },
+    release_plan: releasePlanStatus(directory, iteration),
   };
   if (options.check) result.checks = { portable_files: "pass" };
   return result;

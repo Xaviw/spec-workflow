@@ -359,6 +359,7 @@ test("task lifecycle 支持可选技术方案并保护 Git binding", (t) => {
   writeFileSync(join(taskDirectory, "prd.md"), "# PRD\n\n### AC-001 行为\n", "utf8");
   assert.match(fail("task", "phase", task.path, "implementation_spec", "--confirmed"), /decisions\.md/);
   writeFileSync(join(taskDirectory, "decisions.md"), "用户内容\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "implementation_spec"), /用户确认/);
   assert.match(fail("task", "phase", task.path, "implementation", "--confirmed"), /只能从/);
 
   let status = runJson("task", "phase", task.path, "implementation_spec", "--confirmed");
@@ -384,6 +385,7 @@ test("task lifecycle 支持可选技术方案并保护 Git binding", (t) => {
   run("task", "phase", task.path, "verification", "--confirmed");
   assert.match(fail("task", "phase", task.path, "done", "--confirmed"), /verification\.md/);
   writeFileSync(join(taskDirectory, "verification.md"), "# 验证\n\nAC-001\n", "utf8");
+  assert.match(fail("task", "phase", task.path, "done"), /用户确认/);
   const backendClone = join(dirname(backend), "backend clone");
   git(dirname(backend), "clone", backend, backendClone);
   runJson(
@@ -444,7 +446,7 @@ test("task lifecycle 支持可选技术方案并保护 Git binding", (t) => {
   assert.equal(status.phase, "implementation_spec");
 });
 
-test("iteration lifecycle 支持无发布方案收口和可移植性检查", (t) => {
+test("iteration lifecycle 支持发布方案新鲜度和可移植性检查", (t) => {
   const { workflow, backend, frontend, run, runJson, fail } = createWorkflow(t);
   const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
   run("setup", "--agent", "codex", ...repositories);
@@ -488,11 +490,30 @@ test("iteration lifecycle 支持无发布方案收口和可移植性检查", (t)
   rmSync(join(releaseArtifacts, "linked"), { recursive: true, force: true });
   rmSync(linkedArtifacts, { recursive: true, force: true });
   assert.equal(runJson("iteration", "status", iteration.id, "--check").checks.portable_files, "pass");
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.status, "stale");
   rmSync(releaseArtifacts, { recursive: true, force: true });
   rmSync(join(workflow, "iterations", iteration.id, "release-plan.md"));
-  assert.equal(runJson("iteration", "status", iteration.id).release_plan.exists, false);
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.status, "missing");
   iterationState = runJson("iteration", "close", iteration.id, "--confirmed");
   assert.equal(iterationState.status, "closed");
+  writeFileSync(
+    join(workflow, "iterations", iteration.id, "release-plan.md"),
+    `<!-- spec-workflow:release-plan ended_at=${iterationState.ended_at} -->\n\n# Release\n`,
+    "utf8",
+  );
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.status, "fresh");
+  writeFileSync(
+    join(workflow, "iterations", iteration.id, "release-plan.md"),
+    `# Release\n\n<!-- spec-workflow:release-plan ended_at=${iterationState.ended_at} -->\n`,
+    "utf8",
+  );
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.status, "stale");
+  writeFileSync(
+    join(workflow, "iterations", iteration.id, "release-plan.md"),
+    "<!-- spec-workflow:release-plan ended_at=2000-01-01T00:00:00.000Z -->\n\n# Release\n",
+    "utf8",
+  );
+  assert.equal(runJson("iteration", "status", iteration.id).release_plan.status, "stale");
   assert.ok(runJson("iteration", "list", "--status", "closed").some((item) => item.id === iteration.id));
   assert.equal(runJson("task", "list").length, 1);
 

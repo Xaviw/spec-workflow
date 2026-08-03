@@ -1,9 +1,9 @@
 ---
 name: sw-technical-design
-description: 编写、只读评审或汇总精简技术方案。工作流任务处于 phase=technical_design 时用于编写方案；用户明确要求评审已有方案或汇总一个迭代内的任务方案时使用。
+description: 编写、只读评审或汇总精简的独立技术评审材料。工作流任务处于 phase=technical_design 时用于评审技术方案；用户明确要求评审已有方案或汇总一个迭代内的任务方案时使用。
 ---
 
-# 编写技术方案
+# 编写独立技术评审
 
 ## 上下文契约
 
@@ -17,7 +17,7 @@ description: 编写、只读评审或汇总精简技术方案。工作流任务�
 
 初始禁止：逐文件实施调查、完整源码扫描、测试命令验证、TDD 步骤、无关任务和全部项目知识。
 
-输出：单任务编写更新任务目录的 `technical-design.md`；迭代汇总更新 `iterations/<iteration-id>/technical-design.md`；只读评审仅输出发现和残余风险。技术方案是可脱离实施过程阅读的精简外部评审材料，不是实施核心依据。
+输出：单任务编写更新任务目录的 `technical-design.md`；迭代汇总更新 `iterations/<iteration-id>/technical-design.md`；只读评审仅输出发现和残余风险。本文档是可脱离实施过程阅读的精简外部评审材料，不替代 `spec.md` 中的内部实施设计。
 
 ## 内容边界
 
@@ -33,7 +33,7 @@ description: 编写、只读评审或汇总精简技术方案。工作流任务�
 2. 识别需要外部评审的接口、数据、关键链路、安全、架构、兼容和风险问题；只调查形成这些结论所需的当前事实。完成：每个评审问题都有足够事实形成结论或明确阻塞。
 3. 按模板写入精简结论。没有实际评审内容的章节删除，不用“不适用”或占位语填充。完成：文档只保留实际命中的评审结论且可独立阅读。
 4. 检查字段、状态、权限、异常和跨端约定是否一致。必须由用户决定且阻塞方案的取舍调用 `grilling`；新术语或达到 ADR 门槛的决定调用 `sw-domain-modeling`。完成：跨章节约定一致，未决项都有明确责任和影响。
-5. 展示评审结论和未决风险。确认问题写明“确认 `technical-design.md` 的关键技术结论并进入 `implementation_spec`”；用户明确确认后运行 `task phase <task> implementation_spec --confirmed` 并调用 `sw-spec`。完成：已按确认成功进入 `implementation_spec`，或保留当前阶段等待明确确认。
+5. 展示评审结论和未决风险。确认问题写明“确认 `technical-design.md` 的独立评审结论并进入 `implementation_spec`”；用户明确确认后运行 `task phase <task> implementation_spec --confirmed` 并调用 `sw-spec`。该次确认同时接受评审结论和后续路径，不再重复确认。完成：已按确认成功进入 `implementation_spec`，或保留当前阶段等待明确确认。
 
 ## 只读评审
 

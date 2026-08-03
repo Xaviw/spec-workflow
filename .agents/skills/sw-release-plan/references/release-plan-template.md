@@ -1,3 +1,5 @@
+<!-- spec-workflow:release-plan ended_at={{iteration_ended_at}} -->
+
 # 发布变更方案
 
 ## 发布概况

@@ -34,6 +34,8 @@
 prd -> [technical_design ->] implementation_spec -> implementation -> verification -> done
 ```
 
+`technical_design` 是可选的独立技术评审材料；无外部评审需要时可以跳过，内部实施设计仍由 `spec.md` 承接。实施方案一经确认，Agent 会在全部 Slice 完成后自动进入 `verification`，不要求用户操作阶段名。
+
 局部、低风险且无需建立工作流 task 的改动，Agent 会在完成代码审查和验证后登记为简单变更。
 
 ## Skill 说明
@@ -65,10 +67,10 @@ prd -> [technical_design ->] implementation_spec -> implementation -> verificati
 - 工作流仓库只保存仓库 ID、相对路径和原生命令；不要写入本机绝对路径、令牌、口令、私钥或其他凭据值。
 - `AGENTS.local.md` 用于本机配置，默认不提交。它可以保存仓库映射、任务绑定和本机环境覆盖。
 - 工作流不会执行 `stash`、`reset`、`checkout`、建分支、`push`、`merge`、部署、DDL 或生产写入。
-- 阶段转换、取消、重开或迭代收口都需要用户明确确认；确认本身不会替代代码审查和验证。
-- 多仓任务在 `verification` 完成后才制定一次提交计划；提交前仍由用户确认，不会自动 push。
+- PRD、独立技术评审、实施方案和最终交付各自在授权边界确认一次；实施完成到验证属于内部衔接，不重复确认。取消、重开和迭代收口仍需用户明确确认。
+- 多仓任务在 `verification` 完成后把验收结论和完整提交计划合并为一次授权，不会自动 push。
 - 任务阶段表示工作位置，不等于质量结论。文档内容、验收证据和代码质量仍需 Agent、审查和用户共同确认。
-- 迭代全部任务终态后可以直接收口；发布方案是可跳过的外部评审材料，不影响 task 或 iteration 完成状态。
+- 迭代全部任务终态后可以直接收口；发布方案是可跳过的外部评审材料，不影响 task 或 iteration 完成状态，状态查询会区分缺失、过期和当前方案。
 
 ## 使用建议
 
