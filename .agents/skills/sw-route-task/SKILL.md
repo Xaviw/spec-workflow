@@ -7,8 +7,6 @@ description: 在用户明确要求新增或修改目标项目的功能、代码�
 
 ## 上下文契约
 
-必读：`AGENTS.md` 和用户请求。
-
 按需读取：术语或项目范围不清时读取 `CONTEXT.md`、`project/index.md`；运行 CLI 或定位仓库确有需要时读取 `AGENTS.local.md`；候选判断使用 `node tools/workflow.js task list --json` 返回的开放任务元数据，只有初判可能相关时才读取对应 `prd.md`。
 
 初始禁止：所有任务正文、全部迭代、全部项目知识、目标仓库源码。

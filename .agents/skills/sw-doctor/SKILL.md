@@ -7,7 +7,7 @@ description: 只读诊断工作流安装、Agent 入口、Skills 映射、本地
 
 ## 上下文契约
 
-必读：`AGENTS.md` 和 doctor 输出。
+必读：doctor 输出。
 
 按需读取：仅在定位对应检查项时读取 `AGENTS.local.md`、当前 Agent 的入口文件、Skills 目录、Git 本地排除文件或已登记仓库的 Git 元数据。
 

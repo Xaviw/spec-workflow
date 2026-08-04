@@ -54,7 +54,7 @@ prd -> [technical_design ->] implementation_spec -> implementation -> verificati
 | `sw-verify` | 汇总代码审查、自动化检查、联调和交付证据。 | 任务进入最终验收阶段时。 |
 | `sw-simple-change` | 完成局部变更的实施、审查、验证和迭代登记。 | 变更简单、范围局部且无需工作流 task 阶段时。 |
 | `sw-fix-bug` | 定位并修复已确认预期不一致的 Bug。 | 报告报错、失败、回归、性能下降或偶发异常时。 |
-| `sw-release-plan` | 为已收口迭代汇总可选发布方案。 | 需要面向外部做发布前评审时。 |
+| `sw-release-plan` | 为可收口迭代预览、为已收口迭代维护可选发布方案。 | 需要面向外部做发布前评审时。 |
 | `sw-domain-modeling` | 统一专业术语并记录关键决策。 | 需要更新 `CONTEXT.md`、创建 ADR 或统一项目概念时。 |
 | `code-review` | 审查指定代码、提交、分支或当前变更。 | 需要独立代码审查，且不要求自动修复时。 |
 | `grilling` | 通过结构化追问澄清必须由用户决定的取舍。 | 需求、方案或决策存在关键未决项时。 |
@@ -99,7 +99,7 @@ prd -> [technical_design ->] implementation_spec -> implementation -> verificati
 | 验收标准（AC） | 可验证的需求结果，使用稳定 ID，例如 `AC-001`；后续方案和验证记录必须覆盖同一组 ID。 |
 | `grilling` | 按决策依赖分轮追问，用于澄清需求、方案或其他必须由用户决定的取舍。 |
 | 简单变更（simple change） | 无需建立工作流 task 的局部变更；仍需完成审查、验证并登记到迭代。 |
-| 发布方案（release plan） | 已收口迭代的可选外部评审材料；它不执行发布，也不影响任务或迭代状态。 |
+| 发布方案（release plan） | 可收口迭代可预览、已收口迭代可保存的外部评审材料；它不执行发布，也不影响任务或迭代状态。 |
 | 项目长期记忆 | 跨任务保留的项目级知识，包括 `CONTEXT.md`、ADR、项目索引和仓库事实。 |
 | `CONTEXT.md` | 项目长期记忆入口，保存项目简介、统一术语和关键决策索引。 |
 | ADR | Architecture Decision Record，记录难以逆转且存在真实取舍的项目级关键决策。 |

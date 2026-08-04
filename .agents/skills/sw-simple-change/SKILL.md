@@ -7,7 +7,7 @@ description: 执行已确认无需建立工作流 task 的局部代码或文档�
 
 ## 上下文契约
 
-必读：`AGENTS.md`、用户请求和 `sw-route-task` 已确认的分类结论。
+必读：`sw-route-task` 已确认的分类结论。
 
 按需读取：定位目标仓库或环境所需的 `AGENTS.local.md`、`project/index.md`；选定仓库后读取对应 `project/repositories/<repo-id>.md`；术语或决定实际命中时读取 `CONTEXT.md` 及其索引指向的 ADR；修改时读取目标模块代码、测试、相关任务（若用户选择同步）和 `AGENTS.md` 规范路由命中的文档。
 
@@ -21,8 +21,8 @@ description: 执行已确认无需建立工作流 task 的局部代码或文档�
 2. 记录 branch、HEAD 和脏文件；重叠修改交由用户决定，不重叠修改经确认后排除。完成：提交与审查基线明确。
 3. 复用目标仓库已有模式和专业术语完成最小修改，并即时同步 `project/index.md` 或对应 `project/repositories/<repo-id>.md` 中失真的当前事实。形成需要 ADR 的关键决定时停止简单流程，转为工作流任务；仅需澄清已有项目概念时可调用 `sw-domain-modeling`。采用 TDD 时在公开测试接缝完成一个行为的有效 red，再写使其 green 的最小实现；局部变更要求依据 Figma、设计稿截图或其他明确视觉基准还原时调用 `ui-recreate` 的实现模式，范围仍必须能在一次上下文内完成，否则交回 `sw-route-task`。普通纯 UI、复杂交互或无稳定测试接缝的遗留代码可按已确认方式测试后补或执行最小替代验证。完成：修改和直接相关的行为及视觉验证通过，任务仍满足简单变更门禁。
 4. 以用户确认的文件或模块及步骤 2 记录的 `HEAD -> worktree` 为明确范围调用 `code-review`，排除初始脏文件和已确认的无关修改；把 `CONTEXT.md` 中命中 repo/module 的 ADR、相关仓库事实、用户请求和适用约束作为审查依据。审查报告必须列出实际读取的专项参考和实际验证覆盖；仅在本次包含 Bug 修复或处理审查发现后的复审时要求原始触发场景和修复后复核结果。本流程处理阻塞项，并在修复后按同一范围复审。完成：P0 已解决或证明误报，P1 已解决或由用户明确接受并写入本次变更验证摘要；自动验证无法覆盖时只列出必要的业务确认。
-5. 检查计划提交的工作流文件没有本机绝对路径、命令包装、版本管理器或可执行文件位置。展示包含目标仓库提交、`simple-change add --iteration <id> --summary <text> --repositories <repo-id,...>`、工作流仓库提交和每个完整 message 的计划；确认问题必须写明提交范围。取得一次确认后按顺序执行，不得 push 或 merge。CLI 自动记录各仓库最终 HEAD、tree、剩余脏文件和时间。完成：提交计划、完整 message 和授权范围一致，授权内提交及 simple change 记录均已完成。
-6. 记录提交后运行 `iteration status <iteration> --json`。仍有非终态任务时只报告剩余项，不提示发布方案；全部任务均为 done/cancelled 时先调用 `sw-release-plan` 的只读预览模式生成不落盘的正文，再连同“A. 收口迭代、写入该发布方案并合并提交”或“B. 跳过发布方案并收口迭代”及两种选择对应的完整 workflow commit message 一并展示。两种选择都先运行 `iteration close <iteration> --confirmed`；选择 A 时把用户已审阅的预览正文和授权传给 `sw-release-plan`，只补入实际 `ended_at` 标记并落盘，确认方案为 `fresh` 后将迭代状态和方案合并为一次提交，不再二次确认；选择 B 不写入或修改发布方案，只提交迭代状态。预览失败时不提供 A，只报告原因并保留 B；用户选择 A 后写入失败时仍按已授权范围提交收口状态并报告，不回退 iteration。工作流不追踪外部实际发布状态。完成：简单变更已有可追踪记录，提交范围与授权一致，迭代已继续开放或按选择收口。
+5. 检查计划提交的工作流文件没有本机绝对路径、命令包装、版本管理器或可执行文件位置。展示包含目标仓库提交、`simple-change add --iteration <id> --summary <text> --repositories <repo-id,...>`、工作流仓库提交和每个完整 message 的计划；确认问题必须写明提交范围。取得一次确认后按顺序执行。CLI 自动记录各仓库最终 HEAD、tree、剩余脏文件和时间。完成：提交计划、完整 message 和授权范围一致，授权内提交及 simple change 记录均已完成。
+6. 记录提交后运行 `iteration status <iteration> --json`。仍有非终态任务时只报告剩余项；全部任务均为 done/cancelled 时，调用 `sw-release-plan` 并按其“调用方收口协议”执行。完成：简单变更已有可追踪记录，迭代已继续开放或按用户选择收口。
 
 交付结果时提示：`若后续自测发现现有行为缺陷，直接说明现象或调用 sw-fix-bug 排查修复。`
 

@@ -7,7 +7,7 @@ description: 定位并修复已有行为与已确认预期不一致的 Bug，可
 
 ## 上下文契约
 
-必读：`AGENTS.md`、用户报告的现象和预期行为。
+必读：用户报告的现象和预期行为。
 
 按需读取：定位仓库或环境需要的 `AGENTS.local.md`；`node tools/workflow.js task list --json` 返回的任务元数据；用户选定任务的状态、验收标准、`spec.md`、Git 快照和验证记录；相关仓库说明、目标代码、调用点、测试及适用规范。
 
@@ -46,5 +46,5 @@ description: 定位并修复已有行为与已确认预期不一致的 Bug，可
 ## 同步和交付
 
 - 关联任务时只更新因修复而失真的当前任务文档和验证证据；`implementation` 任务修复后交回 `sw-implement` 完成阶段收尾，`verification` 或由 done 重开的任务直接调用 `sw-verify` 重新验收，不在本 Skill 内提交。修复证明上游预期或方案错误时，先更新并重新确认受影响文档。
-- 未关联任务时不写工作流文档；验证和复审完成后给出目标仓库提交计划和完整 message 并取得一次确认，不 push 或 merge。目标仓库没有更具体规则时使用 Conventional Commit 英文 type 和中文 subject/body。
+- 未关联任务时不写工作流文档；验证和复审完成后给出目标仓库提交计划和完整 message，取得一次确认后提交。
 - 完成后提示：`修复及可执行验证已完成，请继续业务自测；若仍发现缺陷，直接说明现象或再次调用 sw-fix-bug。`

@@ -38,11 +38,9 @@ description: 对 phase=verification 的工作流任务执行一次最终代码�
 
 ## 完成与迭代收口
 
-用户给予步骤 6 的交付授权后，按已展示计划提交目标仓库、运行 `task phase <task> done --confirmed` 并提交工作流文档，不再二次询问。每一步前重新读取状态；中断后按已有提交和 task phase 幂等续做，不重复 commit。当前工作流不持久化已验证 worktree 的内容指纹，因此完整门禁后中断且任务尚未进入 `done` 时必须重新执行最终矩阵，不能仅凭 HEAD 或文件列表复用结果。不得 push。CLI 自动把最终 HEAD、tree 和剩余脏文件写入 `task.json.git.final`，发布汇总优先读取该状态，不要求 `verification.md` 重复最终提交信息。
+用户给予步骤 6 的交付授权后，按已展示计划提交目标仓库、运行 `task phase <task> done --confirmed` 并提交工作流文档，不再二次询问。每一步前重新读取状态；中断后按已有提交和 task phase 幂等续做，不重复 commit。当前工作流不持久化已验证 worktree 的内容指纹，因此完整门禁后中断且任务尚未进入 `done` 时必须重新执行最终矩阵，不能仅凭 HEAD 或文件列表复用结果。CLI 自动把最终 HEAD、tree 和剩余脏文件写入 `task.json.git.final`，发布汇总优先读取该状态，不要求 `verification.md` 重复最终提交信息。
 
 任务进入 done 并完成已授权提交后运行 `iteration status <iteration> --json`：
 
 - 仍有非终态任务：只报告剩余项，不提示发布方案。
-- 全部任务为 done/cancelled：先调用 `sw-release-plan` 的只读预览模式生成不落盘的发布方案正文，再连同“A. 收口迭代、写入该发布方案并合并提交”或“B. 跳过发布方案并收口迭代”及两种选择对应的完整 workflow commit message 一并展示。该选择授权运行 `iteration close <iteration> --confirmed` 及对应的一次工作流提交。
-
-两种选择都先收口。选择 A 时将用户已审阅的预览正文和授权传给 `sw-release-plan`，只补入实际 `ended_at` 标记并落盘；确认方案状态为 `fresh` 后，把 `iteration.json` 与 `release-plan.md` 合并为一次提交，不再请求第二次授权。选择 B 不写入或修改发布方案，只提交迭代状态。预览失败时不提供 A，只报告原因并保留 B；用户选择 A 后写入失败时，仍按已授权范围提交收口状态并报告失败，不回退 iteration。工作流不追踪外部实际发布状态。
+- 全部任务为 done/cancelled：调用 `sw-release-plan` 并按其“调用方收口协议”执行。
