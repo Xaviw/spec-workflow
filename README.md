@@ -60,7 +60,6 @@ prd -> [technical_design ->] implementation_spec -> implementation -> verificati
 | `grilling` | 通过结构化追问澄清必须由用户决定的取舍。 | 需求、方案或决策存在关键未决项时。 |
 | `ui-recreate` | 根据明确视觉基准实施或验证高保真 UI。 | 有 Figma、设计稿截图或其他明确视觉基准时。 |
 | `handoff` | 整理未完成工作的续做信息。 | 需要切换会话、交接任务或生成续做提示词时。 |
-| `skill-creator` | 创建、修改或评估 Agent Skill。 | 需要开发或优化 Skill 本身时。 |
 
 ## 注意事项
 
@@ -115,13 +114,13 @@ prd -> [technical_design ->] implementation_spec -> implementation -> verificati
 ## 目录速览
 
 ```text
-AGENTS.md                 Agent 最小入口
 .agents/skills/           原生与独立 Skills
-tools/                    工作流内部工具
-standards/                按需读取的工程规范
-CONTEXT.md                项目简介、术语和关键决策索引
 adr/                      项目级关键决策记录
-project/                  项目索引和仓库事实
 iterations/               迭代、任务和发布记录
+project/                  项目索引和仓库事实
+standards/                按需读取的工程规范
+tools/                    工作流内部工具
+AGENTS.md                 Agent 最小入口
 AGENTS.local.md           本机配置，不提交
+CONTEXT.md                项目简介、术语和关键决策索引
 ```
