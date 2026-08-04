@@ -1,7 +1,23 @@
-# 本地设置；Agent 适配器由 setup 写入 .git/info/exclude
+# 本地设置
 AGENTS.local.md
-.spec-workflow.setup.lock
-iterations/.*.iteration.lock
+
+# Agent 工具的派生适配入口
+.codex
+.claude
+CLAUDE.md
+.opencode
+.trae
+.codebuddy
+CODEBUDDY.md
+.gemini
+GEMINI.md
+.reasonix
+.qoder
+.cursor
+.windsurf
+.clinerules
+.cline
+.roo
 
 # 常见本地文件
 .DS_Store

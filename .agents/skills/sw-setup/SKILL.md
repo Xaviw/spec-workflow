@@ -17,12 +17,13 @@ description: 初始化或更新工作流的 Agent 接入、仓库映射和项目
 
 ## 职责边界
 
-CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skills 路径、仓库 ID 到 canonical Git 根目录的映射，以及实施中任务到 exact root 的临时绑定。CLI 写入入口受管块、Skills 链接和本地 Git 排除规则；任务绑定进入 done 后自动移除。
+CLI 只记录稳定的机器配置：Agent ID、仓库 ID 到 canonical Git 根目录的映射，以及实施中任务到 exact root 的临时绑定。CLI 按 Agent ID 写入固定的入口受管块和 Skills 链接；这些派生产物由仓库 `.gitignore` 排除。任务绑定进入 done 后自动移除。
 
 本 Skill 负责理解并写入项目事实：
 
-- 项目名称、目标和仓库角色写入 `CONTEXT.md`、`project/index.md`；
-- 模块、仓库原生启动与验证命令、默认端口、运行时要求、环境变量名、配置中心、外部依赖、联调方式、环境列表和切换方式写入 `project/repositories/<repo-id>.md`；
+- 项目名称和目标写入 `CONTEXT.md`；只有项目特有且会反复使用的概念才作为专业术语写入，仓库或服务清单不写入 `CONTEXT.md`；
+- 完整仓库 ID、角色、关系和仓库说明导航写入 `project/index.md`；
+- 模块、仓库原生启动与验证命令、默认端口、运行时要求、配置机制、外部依赖、联调方式、环境列表和切换方式写入 `project/repositories/<repo-id>.md`；仅当配置项直接影响运行、验证、环境切换或跨仓联调时，记录其名称、用途、来源和获取方式，不抄录完整环境变量清单或配置值；
 - 除 CLI 受管的仓库映射和临时任务绑定外，本机绝对路径、命令包装、版本管理器、可执行文件位置、端口覆盖、本地可操作环境和远程只读环境写在 `AGENTS.local.md` 的 CLI 受管块之外。
 
 本地事实不能扩大 `AGENTS.md` 的安全授权。任何位置都只记录环境变量名、依赖和获取方式，不记录凭据值。
@@ -31,13 +32,13 @@ CLI 只记录稳定的机器配置：Agent ID、可选入口路径、可选 Skil
 
 ## 流程
 
-1. 读取已有配置并探测当前 Agent。若 Agent 原生读取根 `AGENTS.md` 或 `.agents/skills`，对应路径不传；否则确认专用的入口文件和 Skills 目录。两个路径不得重叠或指向工作流核心、任务、项目事实和 Git 元数据。CLI 不维护 Agent 名单，无法从当前环境确定时再询问用户。完成：得到 Agent ID 及必要的两个可选相对路径。
+1. 读取已有配置并探测当前 Agent。CLI 当前为 `claude-code` 固定生成 `CLAUDE.md` 和 `.claude/skills/` 适配入口，其他 Agent 直接读取根 `AGENTS.md` 和 `.agents/skills/`；无法从当前环境确定 Agent ID 时再询问用户。完成：得到 Agent ID。
 2. 对每个已由用户明确指定或确认的目标仓库运行 Git 根目录检查，确认稳定的小写 ASCII ID。拒绝重复 canonical path、子目录和非 Git 根目录。完成：仓库映射唯一且可验证。
-3. 探测已确认目标仓库的项目事实，只询问无法从仓库或现有文档确定的内容。至少确认项目名称和目标、仓库角色、主要模块、启动方式、配置依赖、联调方式和环境边界；未知事实明确写为未知，不猜测。完成：共享事实与本机事实已经分开。
+3. 探测已确认目标仓库的项目事实，只询问无法从仓库或现有文档确定的内容。至少确认项目名称和目标、仓库角色、主要模块、启动方式、配置机制、联调方式和环境边界；只识别执行任务所需的关键配置项，不枚举全部变量。未知事实明确写为未知，不猜测。完成：共享事实与本机事实已经分开，长期记忆没有复制仓库配置清单。
 4. 使用完整期望配置运行一次 setup；传入 `--agent` 会替换 Agent 接入设置，传入一个或多个 `--repo` 会替换仓库映射：
 
    ```text
-   node tools/workflow.js setup --agent <id> [--entry-path <path>] [--skills-path <path>] --repo <repo-id>=<git-root> ... --json
+   node tools/workflow.js setup --agent <id> --repo <repo-id>=<git-root> ... --json
    ```
 
    若目标 Skills 位置已有用户内容，停止并展示冲突；只有用户明确允许覆盖这些精确目标后才添加 `--replace`。核对 JSON `actions` 已逐项反映受管路径的 `created/updated/unchanged/removed`；实际内容变化却没有对应 action 时视为 setup 失败，不用额外写入掩盖。完成：CLI 受管配置和接入已同步，不存在部分替换。

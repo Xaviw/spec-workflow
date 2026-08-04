@@ -10,7 +10,6 @@ import {
   readdirSync,
   rmSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,7 +24,6 @@ import {
   parseIterationData,
   parseTaskData,
   replaceManagedBlock,
-  withFileLocks,
 } from "../workflow/common.js";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..", "..");
@@ -67,6 +65,7 @@ function createWorkflow(t) {
   cpSync(join(REPOSITORY_ROOT, "tools", "workflow"), join(workflow, "tools", "workflow"), { recursive: true });
   cpSync(join(REPOSITORY_ROOT, "tools", "package.json"), join(workflow, "tools", "package.json"));
   cpSync(join(REPOSITORY_ROOT, ".agents", "skills"), join(workflow, ".agents", "skills"), { recursive: true });
+  cpSync(join(REPOSITORY_ROOT, ".gitignore"), join(workflow, ".gitignore"));
   writeFileSync(join(workflow, "AGENTS.md"), "# Test workflow\n", "utf8");
   initializeGit(workflow);
 
@@ -125,14 +124,6 @@ test("CLI 参数、受管块和密钥检查保持最小且严格", () => {
   assert.doesNotThrow(() => assertPortableWorkflowText("服务接口为 `/var/status`", "technical-design.md"));
 });
 
-test("活动文件锁不会仅因超时被抢占", (t) => {
-  const lock = join(temporaryDirectory(t), "active.lock");
-  writeFileSync(lock, String(process.pid), "utf8");
-  const old = new Date(Date.now() - 10 * 60 * 1000);
-  utimesSync(lock, old, old);
-  assert.throws(() => withFileLocks([lock], () => {}), /另一个进程/);
-});
-
 test("iteration/task 状态只接受最小结构", () => {
   const iteration = {
     title: "迭代",
@@ -174,21 +165,18 @@ test("iteration/task 状态只接受最小结构", () => {
   );
 });
 
-test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
+test("setup/doctor 保持幂等并同步固定 Agent 接入", (t) => {
   const { workflow, backend, frontend, invoke, run, runJson, fail } = createWorkflow(t);
   const repositories = ["--repo", `backend=${backend}`, "--repo", `frontend=${frontend}`];
 
   const setup = runJson("setup", "--agent", "codex", ...repositories);
   assert.equal(setup.config.agent.id, "codex");
   assert.deepEqual(setup.config.repositories.map((repo) => repo.id), ["backend", "frontend"]);
-  assert.deepEqual(setup.actions, [
-    { action: "created", path: "AGENTS.local.md" },
-    { action: "updated", path: ".git/info/exclude" },
-  ]);
-  assert.deepEqual(runJson("setup", "--agent", "codex", ...repositories).actions, [
-    { action: "unchanged", path: "AGENTS.local.md" },
-    { action: "unchanged", path: ".git/info/exclude" },
-  ]);
+  assert.deepEqual(setup.actions, [{ action: "created", path: "AGENTS.local.md" }]);
+  assert.deepEqual(
+    runJson("setup", "--agent", "codex", ...repositories).actions,
+    [{ action: "unchanged", path: "AGENTS.local.md" }],
+  );
   assert.equal(runJson("doctor").some((check) => check.level === "error"), false);
   assert.deepEqual(extractManagedJson(readFileSync(join(workflow, "AGENTS.local.md"), "utf8")), setup.config);
   assert.match(fail("iteration", "create", "--title", "   "), /不能为空/);
@@ -197,60 +185,22 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
     "setup",
     "--agent",
     "claude-code",
-    "--entry-path",
-    "CLAUDE.md",
-    "--skills-path",
-    ".claude/skills",
     ...repositories,
   );
-  assert.equal(adapted.config.agent.entry_path, "CLAUDE.md");
+  assert.deepEqual(adapted.config.agent, { id: "claude-code" });
   assert.match(readFileSync(join(workflow, "CLAUDE.md"), "utf8"), /AGENTS\.md/);
   assert.ok(lstatSync(join(workflow, ".claude", "skills", "sw-prd")).isSymbolicLink());
+  assert.match(git(workflow, "check-ignore", "-v", "CLAUDE.md"), /\.gitignore/);
+  assert.match(git(workflow, "check-ignore", "-v", ".claude/skills/sw-prd"), /\.gitignore/);
   assert.equal(runJson("doctor").some((check) => check.level === "error"), false);
-
-  const workflowEntry = join(workflow, "tools", "workflow.js");
-  const workflowEntryBefore = readFileSync(workflowEntry, "utf8");
-  assert.match(
-    fail("setup", "--agent", "bad", "--entry-path", "tools/workflow.js", ...repositories),
-    /受保护的工作流路径/,
-  );
-  assert.equal(readFileSync(workflowEntry, "utf8"), workflowEntryBefore);
-  assert.match(
-    fail(
-      "setup",
-      "--agent",
-      "bad",
-      "--entry-path",
-      ".claude/skills/agent-entry.md",
-      "--skills-path",
-      ".claude/skills",
-      ...repositories,
-    ),
-    /不能重叠/,
-  );
-
-  const invalidEntry = join(workflow, "BROKEN.md");
-  writeFileSync(
-    invalidEntry,
-    "<!-- spec-driven:agent-entry:start -->\nA\n<!-- spec-driven:agent-entry:end -->\n" +
-      "<!-- spec-driven:agent-entry:start -->\nB\n<!-- spec-driven:agent-entry:end -->\n",
-    "utf8",
-  );
-  const currentEntryBefore = readFileSync(join(workflow, "CLAUDE.md"), "utf8");
-  assert.match(
-    fail(
-      "setup",
-      "--agent",
-      "claude-code",
-      "--entry-path",
-      "BROKEN.md",
-      "--skills-path",
-      ".claude/skills",
-      ...repositories,
-    ),
-    /受管块标记不完整/,
-  );
-  assert.equal(readFileSync(join(workflow, "CLAUDE.md"), "utf8"), currentEntryBefore);
+  const ignorePath = join(workflow, ".gitignore");
+  const ignoreContent = readFileSync(ignorePath, "utf8");
+  writeFileSync(ignorePath, "AGENTS.local.md\n", "utf8");
+  const ignoreDoctor = invoke("doctor", "--json");
+  assert.equal(ignoreDoctor.status, 1);
+  assert.ok(JSON.parse(ignoreDoctor.stdout).some((check) => check.id === "setup.local-ignore"));
+  writeFileSync(ignorePath, ignoreContent, "utf8");
+  assert.match(fail("setup", "--agent", "claude-code", "--entry-path", "BROKEN.md", ...repositories), /未知选项/);
 
   const temporarySkill = join(workflow, ".agents", "skills", "temporary-skill");
   mkdirSync(temporarySkill);
@@ -263,10 +213,6 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
     "setup",
     "--agent",
     "claude-code",
-    "--entry-path",
-    "CLAUDE.md",
-    "--skills-path",
-    ".claude/skills",
     ...repositories,
   );
   const temporaryLink = join(workflow, ".claude", "skills", "temporary-skill");
@@ -279,10 +225,6 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
     "setup",
     "--agent",
     "claude-code",
-    "--entry-path",
-    "CLAUDE.md",
-    "--skills-path",
-    ".claude/skills",
     ...repositories,
   );
   assert.equal(existsSync(temporaryLink), false);
@@ -303,10 +245,6 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
       "setup",
       "--agent",
       "claude-code",
-      "--entry-path",
-      "CLAUDE.md",
-      "--skills-path",
-      ".claude/skills",
       ...repositories,
     ),
     /--replace/,
@@ -316,10 +254,6 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
     "setup",
     "--agent",
     "claude-code",
-    "--entry-path",
-    "CLAUDE.md",
-    "--skills-path",
-    ".claude/skills",
     ...repositories,
     "--replace",
   );
@@ -328,7 +262,6 @@ test("setup/doctor 保持幂等并保护 Agent 接入边界", (t) => {
   assert.ok(nativeActions.some((item) => item.action === "removed" && item.path === "CLAUDE.md"));
   assert.ok(nativeActions.some((item) => item.action === "updated" && item.path === "AGENTS.local.md"));
   assert.equal(existsSync(join(workflow, "CLAUDE.md")), false);
-  assert.match(fail("setup", "--agent", "bad", "--entry-path", "../outside.md", ...repositories), /边界/);
 });
 
 test("task lifecycle 支持可选技术方案并保护 Git binding", (t) => {

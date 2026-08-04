@@ -4,12 +4,10 @@ import { basename, dirname, join } from "node:path";
 
 import {
   PHASE_FILES,
-  SETUP_LOCK_FILE,
   assertPortableWorkflowFiles,
   assertPortableWorkflowText,
   bindTaskRepositories,
   captureRepositories,
-  iterationLockPath,
   listTaskDirectories,
   optionList,
   parseIterationData,
@@ -24,7 +22,6 @@ import {
   taskRepositoryBindings,
   today,
   uniqueDirectory,
-  withFileLocks,
   writeJson,
 } from "./common.js";
 
@@ -110,26 +107,24 @@ export function createTask(options) {
   const iteration = resolveIteration(String(options.iteration));
   const repositories = optionList(options.repositories);
   assertRepositories(repositories);
-  return withFileLocks([iterationLockPath(iteration)], () => {
-    assertOpenIteration(iteration);
-    const id = uniqueDirectory(
-      iteration,
-      today() + "-" + slugify(options.slug || title, "task"),
-    );
-    const directory = join(iteration, id);
-    mkdirSync(directory);
-    const task = {
-      title,
-      binding_id: randomUUID(),
-      phase: "prd",
-      repositories,
-      created_at: now(),
-      cancelled_from: null,
-      git: { baseline: null, final: null },
-    };
-    writeJson(join(directory, "task.json"), task);
-    return taskStatus(directory);
-  });
+  assertOpenIteration(iteration);
+  const id = uniqueDirectory(
+    iteration,
+    today() + "-" + slugify(options.slug || title, "task"),
+  );
+  const directory = join(iteration, id);
+  mkdirSync(directory);
+  const task = {
+    title,
+    binding_id: randomUUID(),
+    phase: "prd",
+    repositories,
+    created_at: now(),
+    cancelled_from: null,
+    git: { baseline: null, final: null },
+  };
+  writeJson(join(directory, "task.json"), task);
+  return taskStatus(directory);
 }
 
 export function taskStatus(reference) {
@@ -175,78 +170,72 @@ export function transitionTask(reference, targetPhase, options) {
   if (!options.confirmed) throw new Error("推进任务阶段需要用户确认和 --confirmed");
   const directory = resolveTask(reference);
   const iteration = dirname(directory);
-  return withFileLocks([iterationLockPath(iteration), SETUP_LOCK_FILE], () => {
-    assertOpenIteration(iteration);
-    const task = readTask(directory);
-    const allowed = NEXT_PHASES[task.phase];
-    if (!allowed) {
-      throw new Error("终态任务不能通过 task phase 推进");
-    }
-    if (!allowed.includes(targetPhase)) {
-      throw new Error(`只能从 ${task.phase} 推进到 ${allowed.join(" 或 ")}`);
-    }
-    const artifact = PHASE_FILES[task.phase];
-    if (artifact && !existsSync(join(directory, artifact))) {
-      throw new Error("缺少当前阶段产物: " + artifact);
-    }
-    assertTaskArtifacts(directory, targetPhase);
-    if (targetPhase === "implementation") {
-      const baseline = captureRepositories(task.repositories, false);
-      bindTaskRepositories(task.binding_id, task.repositories);
-      task.git.baseline = baseline;
-    }
-    if (targetPhase === "done") {
-      const bindings = taskRepositoryBindings(task.binding_id, task.repositories);
-      task.git.final = captureRepositories(
-        task.repositories,
-        true,
-        undefined,
-        new Map(task.git.baseline.map((repository) => [
-          repository.id,
-          { ...repository, path: bindings.get(repository.id) },
-        ])),
-      );
-    }
-    task.phase = targetPhase;
-    writeJson(join(directory, "task.json"), task);
-    return taskStatus(directory);
-  });
+  assertOpenIteration(iteration);
+  const task = readTask(directory);
+  const allowed = NEXT_PHASES[task.phase];
+  if (!allowed) {
+    throw new Error("终态任务不能通过 task phase 推进");
+  }
+  if (!allowed.includes(targetPhase)) {
+    throw new Error(`只能从 ${task.phase} 推进到 ${allowed.join(" 或 ")}`);
+  }
+  const artifact = PHASE_FILES[task.phase];
+  if (artifact && !existsSync(join(directory, artifact))) {
+    throw new Error("缺少当前阶段产物: " + artifact);
+  }
+  assertTaskArtifacts(directory, targetPhase);
+  if (targetPhase === "implementation") {
+    const baseline = captureRepositories(task.repositories, false);
+    bindTaskRepositories(task.binding_id, task.repositories);
+    task.git.baseline = baseline;
+  }
+  if (targetPhase === "done") {
+    const bindings = taskRepositoryBindings(task.binding_id, task.repositories);
+    task.git.final = captureRepositories(
+      task.repositories,
+      true,
+      undefined,
+      new Map(task.git.baseline.map((repository) => [
+        repository.id,
+        { ...repository, path: bindings.get(repository.id) },
+      ])),
+    );
+  }
+  task.phase = targetPhase;
+  writeJson(join(directory, "task.json"), task);
+  return taskStatus(directory);
 }
 
 export function cancelTask(reference, options) {
   if (!options.confirmed) throw new Error("取消任务需要 --confirmed");
   const directory = resolveTask(reference);
   const iteration = dirname(directory);
-  return withFileLocks([iterationLockPath(iteration)], () => {
-    assertOpenIteration(iteration);
-    const task = readTask(directory);
-    if (["done", "cancelled"].includes(task.phase)) throw new Error("任务已经是终态");
-    task.cancelled_from = task.phase;
-    task.phase = "cancelled";
-    writeJson(join(directory, "task.json"), task);
-    return taskStatus(directory);
-  });
+  assertOpenIteration(iteration);
+  const task = readTask(directory);
+  if (["done", "cancelled"].includes(task.phase)) throw new Error("任务已经是终态");
+  task.cancelled_from = task.phase;
+  task.phase = "cancelled";
+  writeJson(join(directory, "task.json"), task);
+  return taskStatus(directory);
 }
 
 export function reopenTask(reference, options) {
   if (!options.confirmed) throw new Error("重开任务需要 --confirmed");
   const directory = resolveTask(reference);
   const iteration = dirname(directory);
-  return withFileLocks([iterationLockPath(iteration), SETUP_LOCK_FILE], () => {
-    assertOpenIteration(iteration);
-    const task = readTask(directory);
-    if (task.phase === "cancelled") {
-      task.phase = task.cancelled_from;
-      task.cancelled_from = null;
-    } else if (task.phase === "done") {
-      task.phase = "verification";
-      task.git.final = null;
-    } else {
-      throw new Error("只有 done 或 cancelled 任务可以重开");
-    }
-    writeJson(join(directory, "task.json"), task);
-    return taskStatus(directory);
-  });
+  assertOpenIteration(iteration);
+  const task = readTask(directory);
+  if (task.phase === "cancelled") {
+    task.phase = task.cancelled_from;
+    task.cancelled_from = null;
+  } else if (task.phase === "done") {
+    task.phase = "verification";
+    task.git.final = null;
+  } else {
+    throw new Error("只有 done 或 cancelled 任务可以重开");
+  }
+  writeJson(join(directory, "task.json"), task);
+  return taskStatus(directory);
 }
 
 export function moveTask(reference, options) {
@@ -255,17 +244,12 @@ export function moveTask(reference, options) {
   const sourceIteration = dirname(source);
   const targetIteration = resolveIteration(String(options.iteration));
   if (sourceIteration === targetIteration) throw new Error("任务已在目标迭代中");
-  return withFileLocks(
-    [iterationLockPath(sourceIteration), iterationLockPath(targetIteration)],
-    () => {
-      assertOpenIteration(sourceIteration);
-      assertOpenIteration(targetIteration);
-      const task = readTask(source);
-      if (["done", "cancelled"].includes(task.phase)) throw new Error("终态任务不能移动");
-      const target = join(targetIteration, basename(source));
-      if (existsSync(target)) throw new Error("目标迭代中已存在同名任务");
-      renameSync(source, target);
-      return taskStatus(target);
-    },
-  );
+  assertOpenIteration(sourceIteration);
+  assertOpenIteration(targetIteration);
+  const task = readTask(source);
+  if (["done", "cancelled"].includes(task.phase)) throw new Error("终态任务不能移动");
+  const target = join(targetIteration, basename(source));
+  if (existsSync(target)) throw new Error("目标迭代中已存在同名任务");
+  renameSync(source, target);
+  return taskStatus(target);
 }

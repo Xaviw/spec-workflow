@@ -5,7 +5,6 @@ import {
   ITERATIONS_DIR,
   assertPortableWorkflowFiles,
   captureRepositories,
-  iterationLockPath,
   optionList,
   parseIterationData,
   parseTaskData,
@@ -16,7 +15,6 @@ import {
   slugify,
   today,
   uniqueDirectory,
-  withFileLocks,
   writeJson,
 } from "./common.js";
 
@@ -66,23 +64,21 @@ export function createIteration(options) {
   const title = String(options.title || "").trim();
   if (!title) throw new Error("iteration title 不能为空");
   mkdirSync(ITERATIONS_DIR, { recursive: true });
-  return withFileLocks([join(ITERATIONS_DIR, ".iterations.lock")], () => {
-    const id = uniqueDirectory(
-      ITERATIONS_DIR,
-      today() + "-" + slugify(options.slug || title, "iteration"),
-    );
-    const directory = join(ITERATIONS_DIR, id);
-    mkdirSync(directory);
-    const iteration = {
-      title,
-      status: "open",
-      created_at: now(),
-      ended_at: null,
-      simple_changes: [],
-    };
-    writeJson(join(directory, "iteration.json"), iteration);
-    return { id, path: relativeWorkflowPath(directory), ...iteration };
-  });
+  const id = uniqueDirectory(
+    ITERATIONS_DIR,
+    today() + "-" + slugify(options.slug || title, "iteration"),
+  );
+  const directory = join(ITERATIONS_DIR, id);
+  mkdirSync(directory);
+  const iteration = {
+    title,
+    status: "open",
+    created_at: now(),
+    ended_at: null,
+    simple_changes: [],
+  };
+  writeJson(join(directory, "iteration.json"), iteration);
+  return { id, path: relativeWorkflowPath(directory), ...iteration };
 }
 
 export function listIterations(options = {}) {
@@ -124,36 +120,32 @@ export function iterationStatus(reference, options = {}) {
 export function closeIteration(reference, options) {
   if (!options.confirmed) throw new Error("收口迭代需要用户确认和 --confirmed");
   const directory = resolveIteration(reference);
-  return withFileLocks([iterationLockPath(directory)], () => {
-    const iteration = readIteration(directory);
-    assertOpen(iteration, "收口迭代");
-    const unfinished = taskSummaries(directory).filter(
-      (task) => !["done", "cancelled"].includes(task.phase),
-    );
-    if (unfinished.length) throw new Error("迭代仍有未完成任务");
-    assertPortableWorkflowFiles(directory);
-    iteration.status = "closed";
-    iteration.ended_at = now();
-    writeJson(join(directory, "iteration.json"), iteration);
-    return iterationStatus(directory);
-  });
+  const iteration = readIteration(directory);
+  assertOpen(iteration, "收口迭代");
+  const unfinished = taskSummaries(directory).filter(
+    (task) => !["done", "cancelled"].includes(task.phase),
+  );
+  if (unfinished.length) throw new Error("迭代仍有未完成任务");
+  assertPortableWorkflowFiles(directory);
+  iteration.status = "closed";
+  iteration.ended_at = now();
+  writeJson(join(directory, "iteration.json"), iteration);
+  return iterationStatus(directory);
 }
 
 export function cancelIteration(reference, options) {
   if (!options.confirmed) throw new Error("取消迭代需要 --confirmed");
   const directory = resolveIteration(reference);
-  return withFileLocks([iterationLockPath(directory)], () => {
-    const iteration = readIteration(directory);
-    assertOpen(iteration, "取消迭代");
-    const tasks = taskSummaries(directory);
-    if (tasks.some((task) => task.phase !== "cancelled") || iteration.simple_changes.length) {
-      throw new Error("取消迭代前必须取消全部任务，且迭代不能包含 simple change");
-    }
-    iteration.status = "cancelled";
-    iteration.ended_at = now();
-    writeJson(join(directory, "iteration.json"), iteration);
-    return iterationStatus(directory);
-  });
+  const iteration = readIteration(directory);
+  assertOpen(iteration, "取消迭代");
+  const tasks = taskSummaries(directory);
+  if (tasks.some((task) => task.phase !== "cancelled") || iteration.simple_changes.length) {
+    throw new Error("取消迭代前必须取消全部任务，且迭代不能包含 simple change");
+  }
+  iteration.status = "cancelled";
+  iteration.ended_at = now();
+  writeJson(join(directory, "iteration.json"), iteration);
+  return iterationStatus(directory);
 }
 
 export function addSimpleChange(options) {
@@ -164,17 +156,15 @@ export function addSimpleChange(options) {
   const repositories = optionList(options.repositories);
   if (new Set(repositories).size !== repositories.length) throw new Error("仓库 ID 不能重复");
   const directory = resolveIteration(String(options.iteration));
-  return withFileLocks([iterationLockPath(directory)], () => {
-    const iteration = readIteration(directory);
-    assertOpen(iteration, "登记 simple change");
-    const change = {
-      summary,
-      repositories,
-      git: captureRepositories(repositories, true),
-      recorded_at: now(),
-    };
-    iteration.simple_changes.push(change);
-    writeJson(join(directory, "iteration.json"), iteration);
-    return change;
-  });
+  const iteration = readIteration(directory);
+  assertOpen(iteration, "登记 simple change");
+  const change = {
+    summary,
+    repositories,
+    git: captureRepositories(repositories, true),
+    recorded_at: now(),
+  };
+  iteration.simple_changes.push(change);
+  writeJson(join(directory, "iteration.json"), iteration);
+  return change;
 }

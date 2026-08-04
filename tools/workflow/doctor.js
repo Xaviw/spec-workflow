@@ -1,19 +1,14 @@
 import { existsSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import {
   ROOT,
   discoverSkills,
   parseSetupConfig,
-  readText,
   repositoryIdentity,
   runGit,
 } from "./common.js";
-import {
-  expectedExcludePatterns,
-  inspectIntegration,
-  readRawLocalConfig,
-} from "./setup.js";
+import { inspectIntegration, readRawLocalConfig } from "./setup.js";
 
 function nodeVersionAtLeast(actual, minimum) {
   const left = actual.split(".").map(Number);
@@ -72,12 +67,6 @@ export function runDoctor() {
   }
 
   if (config) {
-    add(
-      "setup.local-ignore",
-      runGit(["check-ignore", "--no-index", "-v", "AGENTS.local.md"], ROOT, true) ? "ok" : "error",
-      "AGENTS.local.md 保持本地",
-      "将 AGENTS.local.md 加入 .gitignore",
-    );
     for (const repository of config.repositories) {
       try {
         repositoryIdentity(repository.path);
@@ -92,25 +81,35 @@ export function runDoctor() {
     } catch (error) {
       add("agent.integration", "error", error.message, "运行 setup 同步 Agent 接入");
     }
-    if (config.agent.entry_path && integration) {
+    const localPaths = ["AGENTS.local.md", integration?.entry_path, integration?.skills_path].filter(Boolean);
+    const unignored = localPaths.filter(
+      (path) => !runGit(["check-ignore", "--no-index", "-v", path], ROOT, true),
+    );
+    add(
+      "setup.local-ignore",
+      unignored.length ? "error" : "ok",
+      unignored.length ? "缺少本地忽略规则: " + unignored.join(", ") : "本地配置和 Agent 适配入口保持本地",
+      "将缺失路径加入 .gitignore",
+    );
+    if (integration?.entry) {
       add(
         "agent.entry",
         integration.entry_ok ? "ok" : "error",
-        config.agent.entry_path,
+        integration.entry_path,
         "运行 setup 同步 Agent 入口",
       );
-    } else if (!config.agent.entry_path) {
+    } else if (integration) {
       add("agent.entry", "ok", "Agent 原生读取 AGENTS.md");
     }
-    if (config.agent.skills_path) {
+    if (integration?.skills) {
       if (!skillsAvailable) {
         add("agent.skills", "error", "Skills 发现失败，无法检查 Agent 链接", "先修复 skills.discovery");
-      } else if (integration) {
+      } else {
         for (const link of integration.skill_links) {
           add(
             "agent.skill." + link.name,
             link.ok ? "ok" : "error",
-            config.agent.skills_path + "/" + link.name,
+            integration.skills_path + "/" + link.name,
             "运行 setup 同步 Skills 链接",
           );
         }
@@ -118,30 +117,13 @@ export function runDoctor() {
           add(
             "agent.skill.stale." + name,
             "error",
-            "残留的受管 Skill 链接: " + config.agent.skills_path + "/" + name,
+            "残留的受管 Skill 链接: " + integration.skills_path + "/" + name,
             "运行 setup 清理失效链接",
           );
         }
       }
-    } else {
+    } else if (integration) {
       add("agent.skills", "ok", "Agent 原生读取 .agents/skills");
-    }
-    try {
-      const gitPath = runGit(["rev-parse", "--git-path", "info/exclude"], ROOT);
-      const excludePath = isAbsolute(gitPath) ? gitPath : resolve(ROOT, gitPath);
-      const lines = new Set(readText(excludePath).split(/\r?\n/));
-      if (config.agent.skills_path && !skillsAvailable) {
-        throw new Error("Skills 发现失败，无法验证 Skills 排除规则");
-      }
-      const missing = expectedExcludePatterns(config, skills).filter((pattern) => !lines.has(pattern));
-      add(
-        "agent.exclude",
-        missing.length ? "error" : "ok",
-        missing.length ? "缺少本地排除规则: " + missing.join(", ") : "本地排除规则完整",
-        "运行 setup 同步本地排除规则",
-      );
-    } catch (error) {
-      add("agent.exclude", "error", error.message, "检查工作流 Git 仓库");
     }
   }
 

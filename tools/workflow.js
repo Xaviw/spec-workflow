@@ -29,7 +29,7 @@ function help() {
   console.log([
     "spec-workflow CLI",
     "",
-    "setup --agent <id> [--entry-path <path>] [--skills-path <path>] --repo <id>=<path>... [--replace] [--json]",
+    "setup --agent <id> --repo <id>=<path>... [--replace] [--json]",
     "doctor [--json]",
     "iteration create --title <title> [--slug <slug>] [--json]",
     "iteration list [--status open|closed|cancelled] [--json]",
@@ -84,7 +84,7 @@ async function main(argv) {
 
   if (group === "setup") {
     assertArity(positionals, 1, "setup --agent <id> --repo <id>=<path>...");
-    assertOptions(options, ["agent", "entry-path", "skills-path", "repo", "replace"]);
+    assertOptions(options, ["agent", "repo", "replace"]);
     printResult(runSetup(options), json);
     return;
   }

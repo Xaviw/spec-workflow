@@ -46,7 +46,6 @@ export const ROOT = canonicalBoundaryPath(
 );
 export const ITERATIONS_DIR = join(ROOT, "iterations");
 export const LOCAL_CONFIG_FILE = join(ROOT, "AGENTS.local.md");
-export const SETUP_LOCK_FILE = join(ROOT, ".spec-workflow.setup.lock");
 export const LOCAL_START = "<!-- spec-driven:local-config:start -->";
 export const LOCAL_END = "<!-- spec-driven:local-config:end -->";
 export const PHASES = [
@@ -67,8 +66,6 @@ export const PHASE_FILES = {
 const BOOLEAN_OPTIONS = new Set(["help", "json", "confirmed", "replace", "check"]);
 const VALUE_OPTIONS = new Set([
   "agent",
-  "entry-path",
-  "skills-path",
   "repo",
   "title",
   "slug",
@@ -93,22 +90,8 @@ const TASK_FIELDS = new Set([
   "cancelled_from",
   "git",
 ]);
-const AGENT_FIELDS = new Set(["id", "entry_path", "skills_path"]);
+const AGENT_FIELDS = new Set(["id"]);
 const REPOSITORY_FIELDS = new Set(["id", "path"]);
-const PROTECTED_INTEGRATION_PATHS = [
-  ".git",
-  ".agents",
-  "tools",
-  "iterations",
-  "standards",
-  "project",
-  "adr",
-  "AGENTS.md",
-  "AGENTS.local.md",
-  "CONTEXT.md",
-  "README.md",
-  ".gitignore",
-];
 
 export function parseCliArgs(args) {
   const positionals = [];
@@ -208,70 +191,6 @@ export function writeJson(path, value) {
   writeText(path, JSON.stringify(value, null, 2));
 }
 
-function acquireLock(path) {
-  mkdirSync(dirname(path), { recursive: true });
-  let descriptor;
-  try {
-    descriptor = openSync(path, "wx", 0o600);
-    writeFileSync(descriptor, String(process.pid), "utf8");
-    fsyncSync(descriptor);
-    return { descriptor, path };
-  } catch (error) {
-    if (descriptor !== undefined) {
-      try {
-        closeSync(descriptor);
-      } finally {
-        rmSync(path, { force: true });
-      }
-    }
-    if (error.code !== "EEXIST") throw error;
-    let stale = false;
-    try {
-      const pid = Number(readFileSync(path, "utf8"));
-      if (Number.isInteger(pid) && pid > 0) {
-        try {
-          process.kill(pid, 0);
-        } catch (processError) {
-          stale = processError.code === "ESRCH";
-        }
-      } else {
-        stale = Date.now() - statSync(path).mtimeMs > 5 * 60 * 1000;
-      }
-    } catch {
-      if (!existsSync(path)) return acquireLock(path);
-      stale = Date.now() - statSync(path).mtimeMs > 5 * 60 * 1000;
-    }
-    if (stale) {
-      rmSync(path, { force: true });
-      return acquireLock(path);
-    }
-    throw new Error("工作流状态正被另一个进程修改，请稍后重试: " + basename(path));
-  }
-}
-
-export function withFileLocks(paths, callback) {
-  const ordered = [...new Set(paths.map((path) => resolve(path)))].sort();
-  const visit = (index) => {
-    if (index === ordered.length) return callback();
-    const lock = acquireLock(ordered[index]);
-    try {
-      return visit(index + 1);
-    } finally {
-      try {
-        closeSync(lock.descriptor);
-      } finally {
-        rmSync(lock.path, { force: true });
-      }
-    }
-  };
-  return visit(0);
-}
-
-export function iterationLockPath(directory) {
-  // ponytail: 每个迭代一把锁；只有实际出现写入竞争时才细分。
-  return join(dirname(directory), "." + basename(directory) + ".iteration.lock");
-}
-
 export function today(date = new Date()) {
   return [
     date.getFullYear(),
@@ -306,16 +225,6 @@ export function ensureWithin(base, target) {
     throw new Error("路径超出工作流边界: " + safeTarget);
   }
   return safeTarget;
-}
-
-export function workflowPath(path, root = ROOT) {
-  if (isAbsolute(path)) throw new Error("工作流内路径必须是相对路径: " + path);
-  return ensureWithin(root, resolve(root, path));
-}
-
-function sameOrWithin(base, target) {
-  const path = relative(base, target);
-  return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(".." + sep));
 }
 
 export function extractManagedJson(text, start = LOCAL_START, end = LOCAL_END) {
@@ -467,34 +376,6 @@ export function parseSetupConfig(raw, root = ROOT) {
   assertExactFields(raw.agent, AGENT_FIELDS, "agent");
   if (typeof raw.agent.id !== "string" || !raw.agent.id.trim()) throw new Error("agent.id 不能为空");
   const agent = { id: raw.agent.id.trim() };
-  const integrationPaths = {};
-  for (const field of ["entry_path", "skills_path"]) {
-    if (raw.agent[field] !== undefined) {
-      if (typeof raw.agent[field] !== "string" || !raw.agent[field].trim()) {
-        throw new Error("agent." + field + " 必须是非空相对路径");
-      }
-      const value = raw.agent[field].trim();
-      const target = workflowPath(value, root);
-      if (
-        target === canonicalBoundaryPath(root) ||
-        PROTECTED_INTEGRATION_PATHS.some((path) => sameOrWithin(workflowPath(path, root), target))
-      ) {
-        throw new Error("Agent 接入路径不能指向受保护的工作流路径: " + value);
-      }
-      integrationPaths[field] = target;
-      agent[field] = value.replaceAll("\\", "/");
-    }
-  }
-  if (
-    integrationPaths.entry_path &&
-    integrationPaths.skills_path &&
-    (
-      sameOrWithin(integrationPaths.entry_path, integrationPaths.skills_path) ||
-      sameOrWithin(integrationPaths.skills_path, integrationPaths.entry_path)
-    )
-  ) {
-    throw new Error("Agent 入口路径与 Skills 路径不能重叠");
-  }
   if (!Array.isArray(raw.repositories) || !raw.repositories.length) {
     throw new Error("setup 至少需要一个仓库映射");
   }

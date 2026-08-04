@@ -9,12 +9,11 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import {
   LOCAL_CONFIG_FILE,
   ROOT,
-  SETUP_LOCK_FILE,
   discoverSkills,
   extractManagedJson,
   isSymbolicLink,
@@ -26,17 +25,16 @@ import {
   replaceManagedBlock,
   replaceTextBlock,
   repositoryIdentity,
-  runGit,
-  withFileLocks,
-  workflowPath,
   writeText,
 } from "./common.js";
 
 export const ENTRY_START = "<!-- spec-driven:agent-entry:start -->";
 export const ENTRY_END = "<!-- spec-driven:agent-entry:end -->";
 export const ENTRY_CONTENT = "请读取并遵循根目录 `AGENTS.md`。";
-export const EXCLUDE_START = "# spec-driven:agent-adapter:start";
-export const EXCLUDE_END = "# spec-driven:agent-adapter:end";
+
+const AGENT_ADAPTERS = {
+  "claude-code": { entry: "CLAUDE.md", skills: ".claude/skills" },
+};
 
 function displayPath(path) {
   return relative(ROOT, path).replaceAll("\\", "/");
@@ -86,12 +84,6 @@ function desiredConfig(options, existing) {
   let agent = existing?.agent ? { ...existing.agent } : null;
   if (options.agent !== undefined) agent = { id: String(options.agent) };
   if (!agent) throw new Error("首次 setup 需要 --agent <id>");
-  if (options["entry-path"] !== undefined) {
-    agent.entry_path = String(options["entry-path"]);
-  }
-  if (options["skills-path"] !== undefined) {
-    agent.skills_path = String(options["skills-path"]);
-  }
   const repositoryOptions = optionValues(options.repo);
   const repositories = repositoryOptions.length
     ? parseRepositoryOptions(repositoryOptions)
@@ -113,26 +105,12 @@ function validateTextBlock(path, body, start, end) {
 }
 
 function integrationPaths(config) {
+  const adapter = AGENT_ADAPTERS[config?.agent?.id];
   return {
-    entry: config?.agent?.entry_path
-      ? workflowPath(config.agent.entry_path)
-      : null,
-    skills: config?.agent?.skills_path
-      ? workflowPath(config.agent.skills_path)
-      : null,
-  };
-}
-
-function excludeUpdate(config) {
-  const gitPath = runGit(["rev-parse", "--git-path", "info/exclude"], ROOT);
-  const path = isAbsolute(gitPath) ? gitPath : resolve(ROOT, gitPath);
-  const patterns = expectedExcludePatterns(config);
-  const before = readText(path);
-  return {
-    path,
-    content: patterns.length
-      ? replaceTextBlock(before, patterns.join("\n"), EXCLUDE_START, EXCLUDE_END)
-      : removeTextBlock(before, EXCLUDE_START, EXCLUDE_END),
+    entry_path: adapter?.entry || null,
+    skills_path: adapter?.skills || null,
+    entry: adapter?.entry ? join(ROOT, adapter.entry) : null,
+    skills: adapter?.skills ? join(ROOT, adapter.skills) : null,
   };
 }
 
@@ -162,8 +140,7 @@ function preflight(previous, desired, replace) {
     "# 本地工作流设置\n\n受管块外可记录本机差异，不得写入凭据值。\n",
   );
   const localContent = replaceManagedBlock(localBase, desired);
-  const exclude = excludeUpdate(desired);
-  return { oldPaths, newPaths, conflicts, localContent, exclude };
+  return { oldPaths, newPaths, conflicts, localContent };
 }
 
 function mutation() {
@@ -263,44 +240,31 @@ function applyCurrentIntegration(config, plan, actions, changes) {
   }
 }
 
-export function expectedExcludePatterns(config, skills) {
-  const patterns = ["/AGENTS.local.md"];
-  if (config.agent.entry_path) patterns.push("/" + config.agent.entry_path.replaceAll("\\", "/"));
-  if (config.agent.skills_path) {
-    const base = config.agent.skills_path.replaceAll("\\", "/").replace(/\/$/, "");
-    patterns.push(...(skills || discoverSkills()).map((name) => "/" + base + "/" + name));
-  }
-  return patterns;
-}
-
 export function runSetup(options) {
-  return withFileLocks([SETUP_LOCK_FILE], () => {
-    let existing = null;
+  let existing = null;
+  try {
+    existing = readLocalConfig();
+  } catch (error) {
+    if (options.agent === undefined || !optionValues(options.repo).length) throw error;
+  }
+  const config = desiredConfig(options, existing);
+  const plan = preflight(existing, config, Boolean(options.replace));
+  const actions = [];
+  const changes = mutation();
+  try {
+    removePreviousIntegration(plan, actions, changes);
+    applyCurrentIntegration(config, plan, actions, changes);
+    actions.push({ action: changes.write(LOCAL_CONFIG_FILE, plan.localContent), path: displayPath(LOCAL_CONFIG_FILE) });
+  } catch (error) {
     try {
-      existing = readLocalConfig();
-    } catch (error) {
-      if (options.agent === undefined || !optionValues(options.repo).length) throw error;
+      changes.rollback();
+    } catch (rollbackError) {
+      throw new Error(error.message + "；" + rollbackError.message);
     }
-    const config = desiredConfig(options, existing);
-    const plan = preflight(existing, config, Boolean(options.replace));
-    const actions = [];
-    const changes = mutation();
-    try {
-      removePreviousIntegration(plan, actions, changes);
-      applyCurrentIntegration(config, plan, actions, changes);
-      actions.push({ action: changes.write(LOCAL_CONFIG_FILE, plan.localContent), path: displayPath(LOCAL_CONFIG_FILE) });
-      actions.push({ action: changes.write(plan.exclude.path, plan.exclude.content), path: ".git/info/exclude" });
-    } catch (error) {
-      try {
-        changes.rollback();
-      } catch (rollbackError) {
-        throw new Error(error.message + "；" + rollbackError.message);
-      }
-      throw error;
-    }
-    changes.commit();
-    return { config, actions };
-  });
+    throw error;
+  }
+  changes.commit();
+  return { config, actions };
 }
 
 export function inspectIntegration(config, skills) {
@@ -315,6 +279,8 @@ export function inspectIntegration(config, skills) {
   return {
     entry: paths.entry,
     skills: paths.skills,
+    entry_path: paths.entry_path,
+    skills_path: paths.skills_path,
     entry_ok: !paths.entry || (
       entryStart >= 0 &&
       entryEnd > entryStart &&
